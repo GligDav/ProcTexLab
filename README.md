@@ -26,6 +26,8 @@ result = TextureFitter(FitConfig(
 )).fit(image)
 
 reconstruction = result.evaluate(width=image.shape[1], height=image.shape[0])
+# Inspect procedural continuation over two source-sized UV intervals.
+extended = result.evaluate_region(512, 512, (0, 2), (0, 2))
 print(result.metrics)
 print(result.model.components)
 result.save_json("fit.json")
@@ -79,7 +81,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Min improvement** field sets the minimum candidate score and MSE decrease required to retain another atom; lowering it permits smaller residual improvements and potentially larger models. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Min improvement** field sets the minimum candidate score and MSE decrease required to retain another atom; lowering it permits smaller residual improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
 Run the self-contained synthetic example:
 

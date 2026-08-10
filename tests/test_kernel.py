@@ -3,12 +3,24 @@ import numpy as np
 import pytest
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
     ProceduralTextureModel, SinusoidComponent, TextureFitter, normalize_image)
-from procedural_texture_kernel.coordinates import coordinate_grid
+from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
 
 def test_coordinates():
     u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
     assert u[0,-1] == .75 and v[-1,0] == .5
+
+def test_coordinate_region_and_extended_evaluation():
+    u, v = coordinate_grid_region(4, 2, (1, 3), (-1, 1))
+    assert np.allclose(u[0], [1, 1.5, 2, 2.5])
+    assert np.allclose(v[:, 0], [-1, 0])
+    model = ProceduralTextureModel(components=[SinusoidComponent(1, 1, 0, 0)])
+    regular = model.evaluate(8, 5)
+    extended = model.evaluate_region(16, 5, (0, 2), (0, 1))
+    assert np.allclose(extended[:, :8], regular)
+    assert np.allclose(extended[:, 8:], regular)
+    with pytest.raises(ValueError, match="upper bound"):
+        model.evaluate_region(4, 4, (1, 1), (0, 1))
 
 @pytest.mark.parametrize("component", [SinusoidComponent(), GaborComponent(), GaussianRBFComponent()])
 def test_components_are_finite(component):

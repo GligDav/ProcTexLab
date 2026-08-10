@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import numpy as np
 from .components import ProceduralComponent, component_from_dict
-from .coordinates import COORDINATE_SYSTEM, coordinate_grid
+from .coordinates import COORDINATE_SYSTEM, coordinate_grid, coordinate_grid_region
 
 SCHEMA_VERSION = 1
 
@@ -29,6 +29,13 @@ class ProceduralTextureModel:
     def evaluate(self, width: int, height: int) -> np.ndarray:
         """Evaluate to a ``(height, width)`` float array."""
         return self.evaluate_grid(*coordinate_grid(width, height))
+    def evaluate_region(
+        self, width: int, height: int,
+        u_bounds: tuple[float, float] = (0.0, 1.0),
+        v_bounds: tuple[float, float] = (0.0, 1.0),
+    ) -> np.ndarray:
+        """Evaluate an arbitrary UV rectangle for continuation/tiling inspection."""
+        return self.evaluate_grid(*coordinate_grid_region(width, height, u_bounds, v_bounds))
     def to_dict(self) -> dict:
         return {"schema_version": SCHEMA_VERSION, "coordinate_system": COORDINATE_SYSTEM,
                 "bias": self.bias, "trend_u": self.trend_u, "trend_v": self.trend_v,

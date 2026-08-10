@@ -51,6 +51,13 @@ class FitResult:
     metadata: dict = field(default_factory=dict)
     def evaluate(self, width: int, height: int) -> np.ndarray:
         return self.model.evaluate(width, height)
+    def evaluate_region(
+        self, width: int, height: int,
+        u_bounds: tuple[float, float] = (0.0, 1.0),
+        v_bounds: tuple[float, float] = (0.0, 1.0),
+    ) -> np.ndarray:
+        """Evaluate the fitted model outside its original UV domain."""
+        return self.model.evaluate_region(width, height, u_bounds, v_bounds)
     def to_dict(self) -> dict:
         return {"schema_version": 1, "model": self.model.to_dict(), "metrics": self.metrics,
                 "metadata": self.metadata}
