@@ -79,7 +79,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Min improvement** field sets the minimum candidate score and MSE decrease required to retain another atom; lowering it permits smaller residual improvements and potentially larger models. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
 Run the self-contained synthetic example:
 

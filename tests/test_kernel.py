@@ -40,3 +40,8 @@ def test_synthetic_fit_and_determinism():
 def test_constant_and_non_square():
     result=TextureFitter(FitConfig(max_components=2)).fit(np.full((19,31),.37))
     assert result.evaluate(31,19).shape == (19,31) and result.metrics["rmse"] < 1e-7
+
+@pytest.mark.parametrize("value", [-1.0, float("nan"), float("inf")])
+def test_min_improvement_validation(value):
+    with pytest.raises(ValueError, match="min_improvement"):
+        FitConfig(min_improvement=value)

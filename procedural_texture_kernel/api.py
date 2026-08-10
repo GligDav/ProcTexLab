@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 from typing import Callable
+import math
 import numpy as np
 from .fitting import fit_texture
 from .io import normalize_image
@@ -35,6 +36,8 @@ class FitConfig:
             raise ValueError("fitting_resolution must be at least 8 or None")
         if self.min_frequency < 0 or self.max_frequency <= self.min_frequency:
             raise ValueError("frequency bounds are invalid")
+        if not math.isfinite(self.min_improvement) or self.min_improvement < 0:
+            raise ValueError("min_improvement must be a finite, non-negative number")
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
 

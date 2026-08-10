@@ -16,8 +16,10 @@ class TestApplication(tk.Tk):
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
         self.components = tk.IntVar(value=8); self.iterations = tk.IntVar(value=40)
         self.resolution = tk.IntVar(value=96); self.seed = tk.IntVar(value=0)
+        self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
-                                ("Fit resolution", self.resolution), ("Seed", self.seed)):
+                                ("Fit resolution", self.resolution), ("Seed", self.seed),
+                                ("Min improvement", self.min_improvement)):
             ttk.Label(controls, text=label).pack(side="left", padx=(8,2))
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
         ttk.Button(controls, text="Load Image", command=self.load).pack(side="left", padx=8)
@@ -49,7 +51,8 @@ class TestApplication(tk.Tk):
         if self.source is None or self.running: return
         try:
             config = FitConfig(seed=self.seed.get(), max_components=self.components.get(),
-                               max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get())
+                               max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
+                               min_improvement=self.min_improvement.get())
         except (ValueError, tk.TclError) as exc: messagebox.showerror("Invalid settings", str(exc)); return
         self.running = True; self.fit_button.state(["disabled"])
         def worker():
