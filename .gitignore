@@ -209,6 +209,10 @@ tempCodeRunnerFile.py
 # PyPI configuration file
 .pypirc
 
+# Project-generated example and research-extraction output
+example_output/
+.tmp_pdf_reader/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

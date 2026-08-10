@@ -1,0 +1,42 @@
+import json
+import numpy as np
+import pytest
+from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
+    ProceduralTextureModel, SinusoidComponent, TextureFitter, normalize_image)
+from procedural_texture_kernel.coordinates import coordinate_grid
+from procedural_texture_kernel.metrics import calculate_metrics
+
+def test_coordinates():
+    u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
+    assert u[0,-1] == .75 and v[-1,0] == .5
+
+@pytest.mark.parametrize("component", [SinusoidComponent(), GaborComponent(), GaussianRBFComponent()])
+def test_components_are_finite(component):
+    u,v=coordinate_grid(13,9); result=component.evaluate(u,v)
+    assert result.shape == (9,13) and np.isfinite(result).all()
+
+def test_model_sum_and_serialization(tmp_path):
+    model=ProceduralTextureModel(.2,.1,-.2,[SinusoidComponent(.3,2,1,.4), GaussianRBFComponent(-.1,.3,.7,.12)])
+    expected=model.evaluate(17,11); restored=ProceduralTextureModel.from_dict(json.loads(json.dumps(model.to_dict())))
+    assert np.allclose(expected, restored.evaluate(17,11))
+    path=tmp_path/"m.json"; model.save_json(path); assert np.allclose(expected, ProceduralTextureModel.load_json(path).evaluate(17,11))
+
+def test_metrics_known():
+    m=calculate_metrics(np.array([0.,1.]),np.array([0.,0.]))
+    assert m["mse"] == .5 and m["rmse"] == pytest.approx(np.sqrt(.5)) and m["mae"] == .5
+
+def test_normalization():
+    assert normalize_image(np.array([[0,255]],dtype=np.uint8)).tolist() == [[0,1]]
+    rgb=np.zeros((2,3,3),dtype=np.uint16); assert normalize_image(rgb).shape == (2,3)
+    with pytest.raises(ValueError): normalize_image(np.zeros((2,2,2)))
+
+def test_synthetic_fit_and_determinism():
+    truth=ProceduralTextureModel(.5,components=[SinusoidComponent(.22,3,1,.35)])
+    image=truth.evaluate(48,32); config=FitConfig(max_components=2,fitting_resolution=None,max_iterations=30)
+    a=TextureFitter(config).fit(image); b=TextureFitter(config).fit(image)
+    assert a.metrics["rmse"] < .015
+    assert np.allclose(a.reconstruction,b.reconstruction)
+
+def test_constant_and_non_square():
+    result=TextureFitter(FitConfig(max_components=2)).fit(np.full((19,31),.37))
+    assert result.evaluate(31,19).shape == (19,31) and result.metrics["rmse"] < 1e-7

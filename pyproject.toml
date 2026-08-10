@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "procedural-texture-kernel"
+version = "0.1.0"
+description = "Sparse multiscale raster-to-procedural-texture fitting kernel"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-only"}
+dependencies = ["numpy>=1.24", "scipy>=1.10", "Pillow>=9"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["procedural_texture_kernel*", "gui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
