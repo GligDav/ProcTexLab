@@ -45,10 +45,12 @@ class TestApplication(tk.Tk):
         self.histogram_weight = tk.DoubleVar(value=0.5)
         self.autocorrelation_weight = tk.DoubleVar(value=0.75)
         self.gradient_weight = tk.DoubleVar(value=0.5)
+        self.mse_weight = tk.DoubleVar(value=1.0)
         for label, variable in (("Spectrum", self.spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
-                                ("Gradient", self.gradient_weight)):
+                                ("Gradient", self.gradient_weight),
+                                ("MSE", self.mse_weight)):
             ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
             ttk.Entry(weight_controls, textvariable=variable, width=8).pack(side="left")
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
@@ -144,7 +146,8 @@ class TestApplication(tk.Tk):
                          spectrum_weight=self.spectrum_weight.get(),
                          histogram_weight=self.histogram_weight.get(),
                          autocorrelation_weight=self.autocorrelation_weight.get(),
-                         gradient_weight=self.gradient_weight.get())
+                         gradient_weight=self.gradient_weight.get(),
+                         mse_weight=self.mse_weight.get())
 
     def _poll(self):
         try:

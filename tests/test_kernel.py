@@ -116,13 +116,20 @@ def test_texture_loss_is_statistical_and_reports_components():
     unrelated_loss, _ = evaluator.evaluate(rng.random(reference.shape))
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
-                                  "autocorrelation_loss", "gradient_loss"}
+                                  "autocorrelation_loss", "gradient_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
     assert shifted_loss < np.mean((reference - shifted) ** 2)
 
 def test_texture_loss_weight_validation():
     with pytest.raises(ValueError, match="weight"):
-        TextureLossWeights(0, 0, 0, 0)
+        TextureLossWeights(0, 0, 0, 0, 0)
+
+def test_mse_texture_loss_component_and_weighting():
+    reference = np.zeros((4, 6))
+    candidate = np.full((4, 6), .5)
+    total, parts = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 1)).evaluate(candidate)
+    assert parts["mse_loss"] == pytest.approx(.25)
+    assert total == pytest.approx(.25)
 
 def test_normalization():
     assert normalize_image(np.array([[0,255]],dtype=np.uint8)).tolist() == [[0,1]]

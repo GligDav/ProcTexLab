@@ -41,7 +41,7 @@ result.save_json("fit.json")
 - `components.py` defines typed, serializable sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
-- `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, and gradient-statistics objective.
+- `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, gradient-statistics, and MSE objective.
 - `api.py` exposes configuration, fitter, and result objects.
 - `io.py` handles raster loading and scalar normalization; `metrics.py` is reusable numerical evaluation.
 - `gui/test_app.py` and `examples/basic_usage.py` are replaceable clients of the public API.
@@ -52,9 +52,9 @@ The kernel never imports GUI modules. Image I/O contains no optimizer logic.
 
 The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, estimates DC and a plane, then iterates against the residual. A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized RBF and oriented Gabor atoms at several scales. Pixel residual correlation is used only to initialize candidates; it is not the optimization objective. Candidate selection, stopping, amplitude adjustment, and bounded nonlinear refinement minimize a weighted statistical texture loss composed of multi-scale log-power spectra, intensity-distribution CDF distance, normalized spatial autocorrelation, and periodic gradient magnitude/orientation statistics. Consequently, a translated but statistically equivalent texture can score well even with poor pixel-wise MSE.
 
-The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and `gradient_weight`. Defaults are `1.0`, `0.5`, `0.75`, and `0.5`. The reported `texture_loss` is the weighted mean, keeping its scale stable when all weights are multiplied by the same factor.
+The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, `gradient_weight`, and `mse_weight`. Defaults are `1.0`, `0.5`, `0.75`, `0.5`, and `1.0`. The reported `texture_loss` is the weighted mean, keeping its scale stable when all weights are multiplied by the same factor.
 
-Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the four texture-loss weights, and `fit_plane`. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
+Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the five texture-loss weights, and `fit_plane`. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
 
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
@@ -88,7 +88,7 @@ model.add(WaveletComponent(amplitude=-0.1, center_u=0.4, center_v=0.6, scale_u=0
 
 2D grayscale and 3/4-channel RGB(A) arrays are accepted. Integer formats (including uint16) are divided by their dtype range; floating inputs already in `[0, 1]` are preserved, while out-of-range finite values are min/max normalized. RGB uses linear coefficients 0.2126/0.7152/0.0722; alpha is ignored. Empty, malformed, NaN, and infinite inputs raise descriptive errors.
 
-The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, and `gradient_loss`. MSE, RMSE, MAE, PSNR, normalized RMSE, and correlation remain available strictly as pixel-aligned diagnostics.
+The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, `gradient_loss`, and `mse_loss`. MSE is also part of the configurable fitting objective; RMSE, MAE, PSNR, normalized RMSE, and correlation remain available as diagnostics.
 
 ## GUI and example
 
@@ -98,7 +98,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable sinusoid, Gabor, Gaussian RBF, Perlin-noise, and wavelet candidates; at least one must remain selected. The four fields under **Texture loss weights** directly control the spectrum, histogram, autocorrelation, and gradient contributions. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. The five fields under **Texture loss weights** directly control the spectrum, histogram, autocorrelation, gradient, and MSE contributions. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:

@@ -40,6 +40,7 @@ class FitConfig:
     histogram_weight: float = 0.5
     autocorrelation_weight: float = 0.75
     gradient_weight: float = 0.5
+    mse_weight: float = 1.0
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
@@ -53,13 +54,15 @@ class FitConfig:
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
-                           self.autocorrelation_weight, self.gradient_weight)
+                           self.autocorrelation_weight, self.gradient_weight,
+                           self.mse_weight)
 
     @property
     def texture_loss_weights(self) -> TextureLossWeights:
         """Return the validated composite texture-loss weights."""
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
-                                  self.autocorrelation_weight, self.gradient_weight)
+                                  self.autocorrelation_weight, self.gradient_weight,
+                                  self.mse_weight)
 
 @dataclass
 class FitResult:

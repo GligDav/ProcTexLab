@@ -6,14 +6,15 @@ from scipy.ndimage import gaussian_filter
 
 @dataclass(frozen=True)
 class TextureLossWeights:
-    """Weights of the composite, non-pixel-aligned texture objective."""
+    """Weights of the composite statistical and pixel-aligned objective."""
     spectrum: float = 1.0
     histogram: float = 0.5
     autocorrelation: float = 0.75
     gradient: float = 0.5
+    mse: float = 1.0
 
     def __post_init__(self):
-        values = (self.spectrum, self.histogram, self.autocorrelation, self.gradient)
+        values = (self.spectrum, self.histogram, self.autocorrelation, self.gradient, self.mse)
         if not all(np.isfinite(values)) or any(value < 0 for value in values):
             raise ValueError("texture loss weights must be finite and non-negative")
         if sum(values) <= 0:
@@ -83,17 +84,21 @@ class TextureLoss:
         histogram = float(np.mean(np.abs(self._histogram - _histogram_feature(image))))
         autocorrelation = float(np.mean((self._autocorrelation - _autocorrelation_feature(image)) ** 2))
         gradient = float(np.mean(np.abs(self._gradient - _gradient_feature(image))))
+        mse = float(np.mean((self.reference - image) ** 2))
         return {"spectrum_loss": spectrum, "histogram_loss": histogram,
-                "autocorrelation_loss": autocorrelation, "gradient_loss": gradient}
+                "autocorrelation_loss": autocorrelation, "gradient_loss": gradient,
+                "mse_loss": mse}
 
     def evaluate(self, candidate: np.ndarray) -> tuple[float, dict[str, float]]:
         parts = self.components(candidate)
         weighted = (self.weights.spectrum * parts["spectrum_loss"]
                     + self.weights.histogram * parts["histogram_loss"]
                     + self.weights.autocorrelation * parts["autocorrelation_loss"]
-                    + self.weights.gradient * parts["gradient_loss"])
+                    + self.weights.gradient * parts["gradient_loss"]
+                    + self.weights.mse * parts["mse_loss"])
         total = float(weighted / (self.weights.spectrum + self.weights.histogram
-                                  + self.weights.autocorrelation + self.weights.gradient))
+                                  + self.weights.autocorrelation + self.weights.gradient
+                                  + self.weights.mse))
         return total, {"texture_loss": total, **parts}
 
 def calculate_texture_loss(reference, candidate, weights: TextureLossWeights | None = None) -> dict[str, float]:

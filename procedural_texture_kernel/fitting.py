@@ -252,4 +252,5 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                  "weights": {"spectrum": weights.spectrum,
                                              "histogram": weights.histogram,
                                              "autocorrelation": weights.autocorrelation,
-                                             "gradient": weights.gradient}}}
+                                             "gradient": weights.gradient,
+                                             "mse": weights.mse}}}
