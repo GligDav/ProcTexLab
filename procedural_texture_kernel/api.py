@@ -15,7 +15,11 @@ from .texture_loss import TextureLossWeights, calculate_texture_loss
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
 SUPPORTED_COMPONENT_FAMILIES = (
-    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "wavelet"
+    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "wavelet",
+    "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
+    "domain_warped_noise", "anisotropic_gaussian", "line", "step_edge",
+    "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
+    "sparse_impulse", "binary_primitive"
 )
 
 @dataclass(frozen=True)

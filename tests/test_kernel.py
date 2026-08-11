@@ -4,6 +4,12 @@ import pytest
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
     PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent, TextureFitter,
     WaveletComponent, normalize_image)
+from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
+    DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
+    FractalBrownianMotionComponent, LineComponent, PolynomialTrendComponent,
+    RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
+    SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
+    VoronoiNoiseComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
@@ -54,6 +60,35 @@ def test_new_component_serialization(component):
     restored = ProceduralTextureModel.from_dict(json.loads(json.dumps(model.to_dict())))
     assert type(restored.components[0]) is type(component)
     assert np.allclose(model.evaluate(19, 17), restored.evaluate(19, 17))
+
+@pytest.mark.parametrize("component", [
+    VoronoiNoiseComponent(seed=3), FractalBrownianMotionComponent(seed=3),
+    RidgedMultifractalComponent(seed=3), TurbulenceNoiseComponent(seed=3),
+    DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
+    StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
+    RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
+    BinaryPrimitiveComponent(),
+])
+def test_extended_components_are_finite_deterministic_and_serializable(component):
+    u, v = coordinate_grid(23, 17)
+    first = component.evaluate(u, v)
+    second = component.evaluate(u, v)
+    restored = ProceduralTextureModel.from_dict(
+        json.loads(json.dumps(ProceduralTextureModel(components=[component]).to_dict())))
+    assert first.shape == u.shape
+    assert np.isfinite(first).all() and np.array_equal(first, second)
+    assert type(restored.components[0]) is type(component)
+    assert np.allclose(first, restored.evaluate_grid(u, v))
+
+def test_component_variants_and_seed_changes():
+    u, v = coordinate_grid(24, 20)
+    assert not np.allclose(VoronoiNoiseComponent(seed=1).basis(u, v),
+                           VoronoiNoiseComponent(seed=2).basis(u, v))
+    assert not np.allclose(DifferenceOfGaussiansComponent(mode="dog").basis(u, v),
+                           DifferenceOfGaussiansComponent(mode="log").basis(u, v))
+    for shape in ("disk", "box", "ring", "checker"):
+        values = BinaryPrimitiveComponent(shape=shape).basis(u, v)
+        assert set(np.unique(values)) <= {0.0, 1.0}
 
 @pytest.mark.parametrize("family, component", [
     ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
@@ -109,3 +144,8 @@ def test_constant_and_non_square():
 def test_min_improvement_validation(value):
     with pytest.raises(ValueError, match="min_improvement"):
         FitConfig(min_improvement=value)
+
+def test_gui_has_labels_for_every_component_family():
+    from gui.test_app import ATOM_LABELS
+    from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES
+    assert set(SUPPORTED_COMPONENT_FAMILIES) <= set(ATOM_LABELS)

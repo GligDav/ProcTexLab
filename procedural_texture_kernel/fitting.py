@@ -1,12 +1,18 @@
 """Research-driven sparse, residual and multiscale fitting implementation."""
 from __future__ import annotations
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 import numpy as np
 from scipy.ndimage import zoom
 from scipy.optimize import minimize
-from .components import (GaborComponent, GaussianRBFComponent, PerlinNoiseComponent,
-                         SinusoidComponent, WaveletComponent)
+from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
+    DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
+    FractalBrownianMotionComponent, GaborComponent, GaussianRBFComponent, LineComponent,
+    PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
+    RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
+    SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
+    VoronoiNoiseComponent, WaveletComponent)
 from .coordinates import coordinate_grid
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLoss
@@ -107,13 +113,44 @@ def _local_candidates(residual, config, dominant_frequency: float):
         if "wavelet" in config.component_families:
             out.extend(WaveletComponent(center_u=cu, center_v=cv, scale_u=s, scale_v=s)
                        for s in (.05, .10, .20))
+        if "anisotropic_gaussian" in config.component_families:
+            out.extend(AnisotropicGaussianComponent(center_u=cu, center_v=cv,
+                       sigma_u=s, sigma_v=s/2, orientation=o)
+                       for s in (.08, .16) for o in (0, np.pi/2))
+        if "line" in config.component_families:
+            out.extend(LineComponent(center_u=cu, center_v=cv, orientation=o)
+                       for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+        if "step_edge" in config.component_families:
+            out.extend(StepEdgeComponent(center_u=cu, center_v=cv, orientation=o)
+                       for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+        if "dog_log" in config.component_families:
+            out.extend(DifferenceOfGaussiansComponent(center_u=cu, center_v=cv,
+                       sigma=s, mode=mode) for s in (.06, .12) for mode in ("dog", "log"))
+        if "radial_wave" in config.component_families:
+            out.append(RadialWaveComponent(center_u=cu, center_v=cv,
+                                           frequency=max(1., dominant_frequency)))
+        if "spiral_wave" in config.component_families:
+            out.append(SpiralWaveComponent(center_u=cu, center_v=cv,
+                                           frequency=max(1., dominant_frequency)))
+        if "binary_primitive" in config.component_families:
+            out.extend(BinaryPrimitiveComponent(center_u=cu, center_v=cv, shape=shape)
+                       for shape in ("disk", "box", "ring"))
+    if "polynomial_trend" in config.component_families:
+        out.append(PolynomialTrendComponent())
+    if "sparse_impulse" in config.component_families:
+        out.append(SparseImpulseComponent(seed=config.seed))
     return out
 
 def _perlin_candidates(config):
-    if "perlin_noise" not in config.component_families:
-        return []
     frequencies = (2.0, 4.0, 8.0, 16.0)
-    return [PerlinNoiseComponent(frequency=f, octaves=3, seed=config.seed + index)
+    families = {"perlin_noise": PerlinNoiseComponent,
+                "fbm": FractalBrownianMotionComponent,
+                "ridged_multifractal": RidgedMultifractalComponent,
+                "turbulence_noise": TurbulenceNoiseComponent,
+                "domain_warped_noise": DomainWarpedNoiseComponent,
+                "voronoi_noise": VoronoiNoiseComponent}
+    return [cls(frequency=f, seed=config.seed + index)
+            for family, cls in families.items() if family in config.component_families
             for index, f in enumerate(frequencies)
             if config.min_frequency <= f <= config.max_frequency]
 
@@ -138,15 +175,18 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
-        def make(p): return PerlinNoiseComponent(p[0], p[1], atom.octaves,
-                                                  atom.persistence, atom.lacunarity,
-                                                  p[2], p[3], atom.seed)
-    else:
+        def make(p): return replace(atom, amplitude=p[0], frequency=p[1],
+                                    offset_u=p[2], offset_v=p[3])
+    elif isinstance(atom, GaborComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
               atom.frequency, atom.orientation, atom.phase]
         bounds = [(-2, 2), (0, 1), (0, 1), (.02, .5), (.02, .5),
                   (.25, 32), (-np.pi, np.pi), (-np.pi, np.pi)]
         def make(p): return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
+    else:
+        # These families have discrete modes or heterogeneous parameterizations;
+        # projection already gives their exact least-squares amplitude.
+        return atom
     def objective(p): return target_loss.evaluate(current + make(p).evaluate(u, v))[0]
     result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
                       options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})

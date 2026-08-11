@@ -9,6 +9,19 @@ from PIL import Image, ImageTk
 from procedural_texture_kernel import (FitConfig, SUPPORTED_COMPONENT_FAMILIES,
                                        TextureFitter, load_image)
 
+ATOM_LABELS = {
+    "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
+    "perlin_noise": "Perlin noise", "wavelet": "Wavelet",
+    "voronoi_noise": "Voronoi noise", "fbm": "Fractal Brownian motion (fBm)",
+    "ridged_multifractal": "Ridged multifractal", "turbulence_noise": "Turbulence noise",
+    "domain_warped_noise": "Domain-warped noise",
+    "anisotropic_gaussian": "Anisotropic Gaussian", "line": "Line / ridge / bar",
+    "step_edge": "Step / sigmoid edge", "dog_log": "DoG / LoG",
+    "polynomial_trend": "Polynomial trend", "radial_wave": "Radial wave",
+    "spiral_wave": "Spiral wave", "sparse_impulse": "Sparse impulse / spot",
+    "binary_primitive": "Binary primitives",
+}
+
 class TestApplication(tk.Tk):
     """Small visual harness; fitting runs on a worker thread."""
     def __init__(self):
@@ -40,15 +53,16 @@ class TestApplication(tk.Tk):
             ttk.Entry(weight_controls, textvariable=variable, width=8).pack(side="left")
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
-        atom_labels = {"sinusoid": "Sinusoid", "gabor": "Gabor",
-                       "gaussian_rbf": "Gaussian RBF", "perlin_noise": "Perlin noise",
-                       "wavelet": "Wavelet"}
         self.atom_enabled = {
             family: tk.BooleanVar(value=True) for family in SUPPORTED_COMPONENT_FAMILIES
         }
-        for family in SUPPORTED_COMPONENT_FAMILIES:
-            ttk.Checkbutton(atom_controls, text=atom_labels[family],
-                            variable=self.atom_enabled[family]).pack(side="left", padx=12)
+        columns = 5
+        for index, family in enumerate(SUPPORTED_COMPONENT_FAMILIES):
+            label = ATOM_LABELS.get(family, family.replace("_", " ").title())
+            ttk.Checkbutton(atom_controls, text=label,
+                            variable=self.atom_enabled[family]).grid(
+                                row=index // columns, column=index % columns,
+                                sticky="w", padx=10, pady=2)
         extent_controls = ttk.Frame(self); extent_controls.pack(fill="x", padx=16)
         ttk.Label(extent_controls, text="Result UV extent").pack(side="left")
         self.extent = tk.DoubleVar(value=1.0)

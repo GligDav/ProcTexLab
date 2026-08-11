@@ -69,6 +69,9 @@ The component types are:
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
 - `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
+- Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`.
+- Geometric/local atoms: `AnisotropicGaussianComponent`, `LineComponent`, `StepEdgeComponent`, `DifferenceOfGaussiansComponent` (`dog` or `log` mode), and `BinaryPrimitiveComponent` (disk, box, ring, or checker).
+- Structured/global atoms: `PolynomialTrendComponent`, `RadialWaveComponent`, `SpiralWaveComponent`, and `SparseImpulseComponent`.
 
 All five names can be selected through `FitConfig.component_families`: `sinusoid`, `gabor`, `gaussian_rbf`, `perlin_noise`, and `wavelet`. They are enabled by default. Components can also be constructed and added directly:
 
