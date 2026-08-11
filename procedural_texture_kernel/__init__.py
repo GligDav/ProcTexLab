@@ -1,5 +1,5 @@
 """Raster-to-procedural-texture computational kernel."""
-from .api import FitConfig, FitResult, TextureFitter
+from .api import FitConfig, FitResult, SUPPORTED_COMPONENT_FAMILIES, TextureFitter
 from .components import (GaborComponent, GaussianRBFComponent, PerlinNoiseComponent,
                          ProceduralComponent, SinusoidComponent, WaveletComponent)
 from .io import load_image, normalize_image
@@ -10,3 +10,4 @@ __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "GaussianRBFComponent", "PerlinNoiseComponent", "WaveletComponent",
            "load_image", "normalize_image"]
 __all__ += ["TextureLossWeights", "calculate_texture_loss"]
+__all__ += ["SUPPORTED_COMPONENT_FAMILIES"]

@@ -6,12 +6,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import numpy as np
 from PIL import Image, ImageTk
-from procedural_texture_kernel import FitConfig, TextureFitter, load_image
+from procedural_texture_kernel import (FitConfig, SUPPORTED_COMPONENT_FAMILIES,
+                                       TextureFitter, load_image)
 
 class TestApplication(tk.Tk):
     """Small visual harness; fitting runs on a worker thread."""
     def __init__(self):
-        super().__init__(); self.title("Procedural Texture Kernel"); self.geometry("1100x650")
+        super().__init__(); self.title("Procedural Texture Kernel"); self.geometry("1100x720")
         self.source = None; self.result = None; self.images = [None, None, None]
         self.events = queue.Queue(); self.running = False; self.extent_job = None
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
@@ -25,6 +26,29 @@ class TestApplication(tk.Tk):
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
         ttk.Button(controls, text="Load Image", command=self.load).pack(side="left", padx=8)
         self.fit_button = ttk.Button(controls, text="Fit", command=self.fit); self.fit_button.pack(side="left")
+        weight_controls = ttk.LabelFrame(self, text="Texture loss weights")
+        weight_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.spectrum_weight = tk.DoubleVar(value=1.0)
+        self.histogram_weight = tk.DoubleVar(value=0.5)
+        self.autocorrelation_weight = tk.DoubleVar(value=0.75)
+        self.gradient_weight = tk.DoubleVar(value=0.5)
+        for label, variable in (("Spectrum", self.spectrum_weight),
+                                ("Histogram", self.histogram_weight),
+                                ("Autocorrelation", self.autocorrelation_weight),
+                                ("Gradient", self.gradient_weight)):
+            ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
+            ttk.Entry(weight_controls, textvariable=variable, width=8).pack(side="left")
+        atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
+        atom_controls.pack(fill="x", padx=16, pady=(0, 4))
+        atom_labels = {"sinusoid": "Sinusoid", "gabor": "Gabor",
+                       "gaussian_rbf": "Gaussian RBF", "perlin_noise": "Perlin noise",
+                       "wavelet": "Wavelet"}
+        self.atom_enabled = {
+            family: tk.BooleanVar(value=True) for family in SUPPORTED_COMPONENT_FAMILIES
+        }
+        for family in SUPPORTED_COMPONENT_FAMILIES:
+            ttk.Checkbutton(atom_controls, text=atom_labels[family],
+                            variable=self.atom_enabled[family]).pack(side="left", padx=12)
         extent_controls = ttk.Frame(self); extent_controls.pack(fill="x", padx=16)
         ttk.Label(extent_controls, text="Result UV extent").pack(side="left")
         self.extent = tk.DoubleVar(value=1.0)
@@ -82,9 +106,7 @@ class TestApplication(tk.Tk):
     def fit(self):
         if self.source is None or self.running: return
         try:
-            config = FitConfig(seed=self.seed.get(), max_components=self.components.get(),
-                               max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
-                               min_improvement=self.min_improvement.get())
+            config = self._build_config()
         except (ValueError, tk.TclError) as exc: messagebox.showerror("Invalid settings", str(exc)); return
         self.running = True; self.fit_button.state(["disabled"])
         def worker():
@@ -94,6 +116,21 @@ class TestApplication(tk.Tk):
                 self.events.put(("result", result))
             except Exception as exc: self.events.put(("error", exc))
         threading.Thread(target=worker, daemon=True).start(); self.after(50, self._poll)
+
+    def _build_config(self) -> FitConfig:
+        """Read and validate all editable fitting controls."""
+        families = tuple(family for family in SUPPORTED_COMPONENT_FAMILIES
+                         if self.atom_enabled[family].get())
+        if not families:
+            raise ValueError("select at least one procedural atom family")
+        return FitConfig(seed=self.seed.get(), max_components=self.components.get(),
+                         max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
+                         component_families=families,
+                         min_improvement=self.min_improvement.get(),
+                         spectrum_weight=self.spectrum_weight.get(),
+                         histogram_weight=self.histogram_weight.get(),
+                         autocorrelation_weight=self.autocorrelation_weight.get(),
+                         gradient_weight=self.gradient_weight.get())
 
     def _poll(self):
         try:
