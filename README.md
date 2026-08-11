@@ -97,6 +97,17 @@ python -m gui.test_app
 
 It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable sinusoid, Gabor, Gaussian RBF, Perlin-noise, and wavelet candidates; at least one must remain selected. The four fields under **Texture loss weights** directly control the spectrum, histogram, autocorrelation, and gradient contributions. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
+To compare two same-sized rasters and interactively calibrate the four objective
+weights, run:
+
+```bash
+python -m gui.texture_loss_calibrator
+```
+
+The calibrator displays both normalized grayscale inputs, each raw loss component,
+its weighted term, and the final normalized `texture_loss`. Editing a weight
+automatically recalculates the result.
+
 Run the self-contained synthetic example:
 
 ```bash
