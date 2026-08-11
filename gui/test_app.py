@@ -103,7 +103,8 @@ class TestApplication(tk.Tk):
                 elif event[0] == "result":
                     result = event[1]; self.result = result
                     self._update_extent_preview(); self._show(result.residual, 2, True)
-                    m = result.metrics; self.status.configure(text=f"RMSE {m['rmse']:.5f}   MAE {m['mae']:.5f}   PSNR {m['psnr']:.2f} dB")
+                    m = result.metrics
+                    self.status.configure(text=f"Texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f} (diagnostic)   PSNR {m['psnr']:.2f} dB")
                     self.running = False; self.fit_button.state(["!disabled"])
                 else:
                     messagebox.showerror("Fit failed", str(event[1])); self.running = False; self.fit_button.state(["!disabled"])

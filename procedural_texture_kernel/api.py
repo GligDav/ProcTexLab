@@ -1,6 +1,6 @@
 """Stable, client-facing fitting API."""
 from __future__ import annotations
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Callable
@@ -10,6 +10,7 @@ from .fitting import fit_texture
 from .io import normalize_image
 from .metrics import calculate_metrics
 from .model import ProceduralTextureModel
+from .texture_loss import TextureLossWeights, calculate_texture_loss
 
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
@@ -28,6 +29,10 @@ class FitConfig:
     min_improvement: float = 1e-6
     ridge: float = 1e-8
     fit_plane: bool = True
+    spectrum_weight: float = 1.0
+    histogram_weight: float = 0.5
+    autocorrelation_weight: float = 0.75
+    gradient_weight: float = 0.5
     def __post_init__(self):
         allowed = {"sinusoid", "gabor", "gaussian_rbf"}
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
@@ -40,6 +45,14 @@ class FitConfig:
             raise ValueError("min_improvement must be a finite, non-negative number")
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
+        TextureLossWeights(self.spectrum_weight, self.histogram_weight,
+                           self.autocorrelation_weight, self.gradient_weight)
+
+    @property
+    def texture_loss_weights(self) -> TextureLossWeights:
+        """Return the validated composite texture-loss weights."""
+        return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
+                                  self.autocorrelation_weight, self.gradient_weight)
 
 @dataclass
 class FitResult:
@@ -72,5 +85,7 @@ class TextureFitter:
         target = normalize_image(np.asarray(image_array))
         model, metadata = fit_texture(target, self.config, progress_callback, cancel_callback)
         reconstruction = model.evaluate(target.shape[1], target.shape[0])
-        return FitResult(model, calculate_metrics(target, reconstruction), reconstruction,
+        metrics = calculate_metrics(target, reconstruction)
+        metrics.update(calculate_texture_loss(target, reconstruction, self.config.texture_loss_weights))
+        return FitResult(model, metrics, reconstruction,
                          target - reconstruction, metadata)

@@ -1,6 +1,6 @@
 # Procedural Texture Kernel
 
-This repository implements the standalone Python kernel for approximating a 2D raster scalar field with a compact sum of procedural atoms. It follows the accompanying HSPD research design: boundary-aware spectral initialization, sparse residual selection, separable amplitude estimation, bounded nonlinear refinement, and coarse-to-fine/local atom candidates. It deliberately contains no Blender dependency.
+This repository implements the standalone Python kernel for approximating a 2D raster scalar field with a compact sum of procedural atoms. It follows the accompanying HSPD research design: boundary-aware spectral initialization, sparse residual proposals, statistical texture matching, bounded nonlinear refinement, and coarse-to-fine/local atom candidates. It deliberately contains no Blender dependency.
 
 ## Installation
 
@@ -40,7 +40,8 @@ result.save_json("fit.json")
 - `coordinates.py` owns the one coordinate convention and cached grid construction.
 - `components.py` defines typed, serializable sinusoid, Gabor, and Gaussian RBF atoms.
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
-- `fitting.py` contains analysis, candidate pursuit, variable projection, and OMP amplitude refitting.
+- `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
+- `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, and gradient-statistics objective.
 - `api.py` exposes configuration, fitter, and result objects.
 - `io.py` handles raster loading and scalar normalization; `metrics.py` is reusable numerical evaluation.
 - `gui/test_app.py` and `examples/basic_usage.py` are replaceable clients of the public API.
@@ -49,9 +50,11 @@ The kernel never imports GUI modules. Image I/O contains no optimizer logic.
 
 ## Fitting behavior and configuration
 
-The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, estimates DC and a plane, then iterates against the residual. A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized RBF and oriented Gabor atoms at several scales. The best candidate is refined with bounded SciPy nonlinear least squares while its amplitude is eliminated analytically (variable projection). After every selection, all active amplitudes and the global terms are refit together using least squares with a small ridge augmentation—an OMP-like update.
+The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, estimates DC and a plane, then iterates against the residual. A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized RBF and oriented Gabor atoms at several scales. Pixel residual correlation is used only to initialize candidates; it is not the optimization objective. Candidate selection, stopping, amplitude adjustment, and bounded nonlinear refinement minimize a weighted statistical texture loss composed of multi-scale log-power spectra, intensity-distribution CDF distance, normalized spatial autocorrelation, and periodic gradient magnitude/orientation statistics. Consequently, a translated but statistically equivalent texture can score well even with poor pixel-wise MSE.
 
-Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, `ridge`, and `fit_plane`. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
+The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and `gradient_weight`. Defaults are `1.0`, `0.5`, `0.75`, and `0.5`. The reported `texture_loss` is the weighted mean, keeping its scale stable when all weights are multiplied by the same factor.
+
+Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the four texture-loss weights, and `fit_plane`. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
 
 This baseline implements the paper's most identifiable first benchmark (Fourier/Gabor/RBF). Perlin/simplex seed-bank inversion, wavelet residual atoms, atom merging, explicit tiling constraints, LASSO, and GPU acceleration are future extensions rather than incomplete hidden code paths.
 
@@ -71,7 +74,7 @@ The component types are:
 
 2D grayscale and 3/4-channel RGB(A) arrays are accepted. Integer formats (including uint16) are divided by their dtype range; floating inputs already in `[0, 1]` are preserved, while out-of-range finite values are min/max normalized. RGB uses linear coefficients 0.2126/0.7152/0.0722; alpha is ignored. Empty, malformed, NaN, and infinite inputs raise descriptive errors.
 
-Reported metrics are MSE, RMSE, MAE, PSNR (assuming normalized peak 1), normalized RMSE, and correlation.
+The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, and `gradient_loss`. MSE, RMSE, MAE, PSNR, normalized RMSE, and correlation remain available strictly as pixel-aligned diagnostics.
 
 ## GUI and example
 
@@ -81,7 +84,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Min improvement** field sets the minimum candidate score and MSE decrease required to retain another atom; lowering it permits smaller residual improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
 Run the self-contained synthetic example:
 
@@ -102,7 +105,7 @@ Tests cover atom evaluation, coordinates, model composition and JSON round trips
 
 ## Current limitations
 
-The model is scalar/grayscale and the GUI is a development tool. Candidate scoring is intentionally compact and materializes only a small active design matrix, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving the true least-squares residual. Periodic seam constraints, noise seed banks, wavelets, robust/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
+The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, noise seed banks, wavelets, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
 
 ## Future Blender integration
 

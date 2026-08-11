@@ -1,13 +1,14 @@
 """Research-driven sparse, residual and multiscale fitting implementation."""
 from __future__ import annotations
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 import numpy as np
 from scipy.ndimage import zoom
-from scipy.optimize import least_squares
+from scipy.optimize import minimize
 from .components import GaborComponent, GaussianRBFComponent, SinusoidComponent
 from .coordinates import coordinate_grid
 from .model import ProceduralTextureModel
+from .texture_loss import TextureLoss
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -24,7 +25,7 @@ def _resize_for_fit(image: np.ndarray, limit: int | None) -> np.ndarray:
     return zoom(image, (shape[0] / image.shape[0], shape[1] / image.shape[1]), order=1)
 
 def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float) -> None:
-    """OMP amplitude refit using stable least squares, not normal equations."""
+    """Initialize global DC/plane coefficients with stable least squares."""
     columns = [np.ones(target.size)]
     if model.trend_u != 0 or model.trend_v != 0:
         columns.extend([(u - .5).ravel(), (v - .5).ravel()])
@@ -42,10 +43,10 @@ def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge
     for component, amplitude in zip(model.components, coefficients[index:]):
         component.amplitude = float(amplitude)
 
-def _initial_plane(target, u, v, enabled: bool) -> ProceduralTextureModel:
+def _initial_plane(target, u, v, enabled: bool, ridge: float) -> ProceduralTextureModel:
     model = ProceduralTextureModel(trend_u=1.0 if enabled else 0.0,
                                    trend_v=1.0 if enabled else 0.0)
-    _solve_linear(model, target, u, v, 0)
+    _solve_linear(model, target, u, v, ridge)
     return model
 
 def _fft_sinusoid_candidates(residual, config, count: int):
@@ -104,46 +105,44 @@ def _local_candidates(residual, config, dominant_frequency: float):
                        for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
     return out
 
-def _refine_new_atom(atom, residual, u, v, max_nfev: int):
-    """Bounded variable projection: amplitude is eliminated at each nonlinear step."""
+def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
+    """Refine one atom against the translation-tolerant composite texture loss."""
     if isinstance(atom, SinusoidComponent):
-        x0 = [atom.frequency_u, atom.frequency_v]
-        bound = max(1.0, np.hypot(*x0) * .35)
-        lo, hi = [x0[0]-bound, x0[1]-bound], [x0[0]+bound, x0[1]+bound]
-        def make(p): return SinusoidComponent(frequency_u=p[0], frequency_v=p[1])
+        x0 = [atom.amplitude, atom.frequency_u, atom.frequency_v, atom.phase]
+        bound = max(1.0, np.hypot(atom.frequency_u, atom.frequency_v) * .35)
+        bounds = [(-2, 2), (atom.frequency_u-bound, atom.frequency_u+bound),
+                  (atom.frequency_v-bound, atom.frequency_v+bound), (-np.pi, np.pi)]
+        def make(p): return SinusoidComponent(p[0], p[1], p[2], p[3])
     elif isinstance(atom, GaussianRBFComponent):
-        x0 = [atom.center_u, atom.center_v, atom.sigma]
-        lo, hi = [0, 0, .015], [1, 1, .5]
-        def make(p): return GaussianRBFComponent(center_u=p[0], center_v=p[1], sigma=p[2])
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma]
+        bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5)]
+        def make(p): return GaussianRBFComponent(p[0], p[1], p[2], p[3])
     else:
-        x0 = [atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
               atom.frequency, atom.orientation, atom.phase]
-        lo, hi = [0, 0, .02, .02, .25, -np.pi, -np.pi], [1, 1, .5, .5, 32, np.pi, np.pi]
-        def make(p): return GaborComponent(center_u=p[0], center_v=p[1], sigma_u=p[2],
-                                           sigma_v=p[3], frequency=p[4], orientation=p[5], phase=p[6])
-    def objective(p):
-        candidate = make(p); amplitude, _ = _project(candidate, residual, u, v)
-        return (residual - amplitude * candidate.basis(u, v)).ravel()
-    result = least_squares(objective, x0, bounds=(lo, hi), max_nfev=max_nfev,
-                           ftol=1e-7, xtol=1e-7, gtol=1e-7)
-    refined = make(result.x)
-    if isinstance(refined, SinusoidComponent): _phase_sinusoid(refined, residual, u, v)
-    else: refined.amplitude, _ = _project(refined, residual, u, v)
-    return refined
+        bounds = [(-2, 2), (0, 1), (0, 1), (.02, .5), (.02, .5),
+                  (.25, 32), (-np.pi, np.pi), (-np.pi, np.pi)]
+        def make(p): return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
+    def objective(p): return target_loss.evaluate(current + make(p).evaluate(u, v))[0]
+    result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
+                      options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})
+    return make(result.x)
 
 def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                 cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
-    """Fit using FFT candidates, residual pursuit, variable projection and OMP refits."""
+    """Fit using residual proposals and a composite statistical texture objective."""
     started = time.perf_counter(); fit_target = _resize_for_fit(target, config.fitting_resolution)
     h, w = fit_target.shape; u, v = coordinate_grid(w, h)
     _notify(progress_callback, "initialization", 0, "Estimating DC and planar trend")
-    model = _initial_plane(fit_target, u, v, config.fit_plane)
+    model = _initial_plane(fit_target, u, v, config.fit_plane, config.ridge)
+    loss = TextureLoss(fit_target, config.texture_loss_weights)
     history = []
     for iteration in range(config.max_components):
         if cancel_callback is not None and cancel_callback():
             raise RuntimeError("fitting cancelled")
-        residual = fit_target - model.evaluate_grid(u, v)
-        before = float(np.mean(residual**2))
+        current = model.evaluate_grid(u, v)
+        residual = fit_target - current
+        before, _ = loss.evaluate(current)
         candidates = []
         if "sinusoid" in config.component_families:
             candidates.extend(_fft_sinusoid_candidates(residual, config, config.fft_candidates))
@@ -159,19 +158,30 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                 score = float(np.mean((atom.amplitude * atom.basis(u, v))**2))
             else:
                 atom.amplitude, score = _project(atom, residual, u, v)
-            scored.append((score, atom))
-        score, chosen = max(scored, key=lambda item: item[0])
-        if score <= config.min_improvement: break
-        chosen = _refine_new_atom(chosen, residual, u, v, config.max_iterations)
-        model.add(chosen); _solve_linear(model, fit_target, u, v, config.ridge)
-        after = float(np.mean((fit_target - model.evaluate_grid(u, v))**2))
+            # Pixel correlation only initializes/shortlists atoms. Selection is
+            # based on the phase/translation-tolerant texture objective.
+            candidate_loss, _ = loss.evaluate(current + atom.evaluate(u, v))
+            scored.append((before - candidate_loss, score, atom))
+        improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
+        if improvement <= config.min_improvement: break
+        chosen = _refine_new_atom(chosen, current, loss, u, v, config.max_iterations)
+        after, parts = loss.evaluate(current + chosen.evaluate(u, v))
         if before - after <= config.min_improvement:
-            model.components.pop(); _solve_linear(model, fit_target, u, v, config.ridge); break
+            break
+        model.add(chosen)
         history.append({"iteration": iteration + 1, "family": chosen.type_name,
-                        "mse": after, "improvement": before - after})
+                        "texture_loss": after, "improvement": before - after, **parts})
         _notify(progress_callback, "fitting", (iteration + 1) / max(config.max_components, 1),
                 f"Added {chosen.type_name} atom {iteration + 1}/{config.max_components}")
     _notify(progress_callback, "complete", 1, "Fit complete")
+    final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
+    weights = config.texture_loss_weights
     return model, {"fit_shape": [h, w], "components": len(model.components),
                    "iterations": history, "elapsed_seconds": time.perf_counter() - started,
-                   "seed": config.seed}
+                   "seed": config.seed,
+                   "objective": {"name": "composite_texture_loss", "final": final_loss,
+                                 "components": final_parts,
+                                 "weights": {"spectrum": weights.spectrum,
+                                             "histogram": weights.histogram,
+                                             "autocorrelation": weights.autocorrelation,
+                                             "gradient": weights.gradient}}}

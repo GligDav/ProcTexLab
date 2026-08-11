@@ -5,6 +5,7 @@ from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFCom
     ProceduralTextureModel, SinusoidComponent, TextureFitter, normalize_image)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
+from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
     u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
@@ -36,6 +37,24 @@ def test_model_sum_and_serialization(tmp_path):
 def test_metrics_known():
     m=calculate_metrics(np.array([0.,1.]),np.array([0.,0.]))
     assert m["mse"] == .5 and m["rmse"] == pytest.approx(np.sqrt(.5)) and m["mae"] == .5
+
+def test_texture_loss_is_statistical_and_reports_components():
+    rng = np.random.default_rng(4)
+    reference = rng.random((32, 40))
+    shifted = np.roll(reference, (5, 7), axis=(0, 1))
+    evaluator = TextureLoss(reference)
+    exact, exact_parts = evaluator.evaluate(reference)
+    shifted_loss, shifted_parts = evaluator.evaluate(shifted)
+    unrelated_loss, _ = evaluator.evaluate(rng.random(reference.shape))
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
+                                  "autocorrelation_loss", "gradient_loss"}
+    assert shifted_loss < unrelated_loss
+    assert shifted_loss < np.mean((reference - shifted) ** 2)
+
+def test_texture_loss_weight_validation():
+    with pytest.raises(ValueError, match="weight"):
+        TextureLossWeights(0, 0, 0, 0)
 
 def test_normalization():
     assert normalize_image(np.array([[0,255]],dtype=np.uint8)).tolist() == [[0,1]]
