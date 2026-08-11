@@ -38,7 +38,7 @@ result.save_json("fit.json")
 ## Architecture
 
 - `coordinates.py` owns the one coordinate convention and cached grid construction.
-- `components.py` defines typed, serializable sinusoid, Gabor, and Gaussian RBF atoms.
+- `components.py` defines typed, serializable sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
 - `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, and gradient-statistics objective.
@@ -56,7 +56,7 @@ The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_wei
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the four texture-loss weights, and `fit_plane`. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
 
-This baseline implements the paper's most identifiable first benchmark (Fourier/Gabor/RBF). Perlin/simplex seed-bank inversion, wavelet residual atoms, atom merging, explicit tiling constraints, LASSO, and GPU acceleration are future extensions rather than incomplete hidden code paths.
+The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model
 
@@ -67,6 +67,17 @@ The component types are:
 - `SinusoidComponent`: amplitude, U/V frequency vector, phase.
 - `GaborComponent`: amplitude, center, two Gaussian widths, carrier frequency, orientation, phase.
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
+- `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
+- `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
+
+All five names can be selected through `FitConfig.component_families`: `sinusoid`, `gabor`, `gaussian_rbf`, `perlin_noise`, and `wavelet`. They are enabled by default. Components can also be constructed and added directly:
+
+```python
+from procedural_texture_kernel import PerlinNoiseComponent, WaveletComponent
+
+model.add(PerlinNoiseComponent(amplitude=0.15, frequency=6, octaves=3, seed=12))
+model.add(WaveletComponent(amplitude=-0.1, center_u=0.4, center_v=0.6, scale_u=0.08))
+```
 
 `ProceduralTextureModel.to_dict()` emits JSON primitives with schema version 1 and the coordinate-system identifier. `save_json`, `load_json`, and `from_dict` support round trips and reject unsupported schemas or component types.
 
@@ -101,11 +112,11 @@ python -m compileall procedural_texture_kernel gui examples
 pytest
 ```
 
-Tests cover atom evaluation, coordinates, model composition and JSON round trips, metrics, image normalization, deterministic synthetic fitting, constant fields, and non-square rasters.
+Tests cover all atom evaluations, seeded Perlin determinism, wavelet localization, model composition and JSON round trips, coordinates, metrics, image normalization, deterministic synthetic fitting, constant fields, and non-square rasters.
 
 ## Current limitations
 
-The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, noise seed banks, wavelets, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
+The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, broader/adaptive noise seed searches, discrete wavelet decompositions, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
 
 ## Future Blender integration
 

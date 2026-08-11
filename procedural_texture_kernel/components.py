@@ -55,7 +55,76 @@ class GaussianRBFComponent(ProceduralComponent):
         r2 = (u - self.center_u) ** 2 + (v - self.center_v) ** 2
         return np.exp(-0.5 * r2 / self.sigma**2)
 
-COMPONENT_TYPES = {c.type_name: c for c in (SinusoidComponent, GaborComponent, GaussianRBFComponent)}
+@dataclass
+class PerlinNoiseComponent(ProceduralComponent):
+    """Seeded fractal 2D Perlin gradient noise."""
+    frequency: float = 4.0
+    octaves: int = 1
+    persistence: float = 0.5
+    lacunarity: float = 2.0
+    offset_u: float = 0.0
+    offset_v: float = 0.0
+    seed: int = 0
+    type_name: ClassVar[str] = "perlin_noise"
+
+    @staticmethod
+    def _noise(x, y, permutation):
+        xi = np.floor(x).astype(np.int64) & 255
+        yi = np.floor(y).astype(np.int64) & 255
+        xf, yf = x - np.floor(x), y - np.floor(y)
+        fade = lambda t: t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+        sx, sy = fade(xf), fade(yf)
+        p = permutation
+        aa, ab = p[p[xi] + yi], p[p[xi] + yi + 1]
+        ba, bb = p[p[xi + 1] + yi], p[p[xi + 1] + yi + 1]
+        def gradient(h, dx, dy):
+            angle = (h & 7) * (np.pi / 4.0)
+            return np.cos(angle) * dx + np.sin(angle) * dy
+        lerp = lambda a, b, t: a + t * (b - a)
+        lower = lerp(gradient(aa, xf, yf), gradient(ba, xf - 1, yf), sx)
+        upper = lerp(gradient(ab, xf, yf - 1), gradient(bb, xf - 1, yf - 1), sx)
+        return np.sqrt(2.0) * lerp(lower, upper, sy)
+
+    def basis(self, u, v):
+        if self.octaves < 1:
+            raise ValueError("Perlin octaves must be at least one")
+        rng = np.random.default_rng(self.seed)
+        base = rng.permutation(256)
+        permutation = np.concatenate((base, base))
+        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)), dtype=np.float64)
+        weight = 1.0
+        frequency = self.frequency
+        for _ in range(self.octaves):
+            result += weight * self._noise(
+                (u + self.offset_u) * frequency,
+                (v + self.offset_v) * frequency,
+                permutation,
+            )
+            weight *= self.persistence
+            frequency *= self.lacunarity
+        total_weight = sum(self.persistence ** i for i in range(self.octaves))
+        return result / total_weight
+
+@dataclass
+class WaveletComponent(ProceduralComponent):
+    """Localized anisotropic Mexican-hat (Ricker) wavelet atom."""
+    center_u: float = 0.5
+    center_v: float = 0.5
+    scale_u: float = 0.12
+    scale_v: float = 0.12
+    orientation: float = 0.0
+    type_name: ClassVar[str] = "wavelet"
+    def basis(self, u, v):
+        du, dv = u - self.center_u, v - self.center_v
+        c, s = np.cos(self.orientation), np.sin(self.orientation)
+        x, y = c * du + s * dv, -s * du + c * dv
+        radius2 = (x / self.scale_u) ** 2 + (y / self.scale_v) ** 2
+        return (1.0 - radius2) * np.exp(-0.5 * radius2)
+
+COMPONENT_TYPES = {c.type_name: c for c in (
+    SinusoidComponent, GaborComponent, GaussianRBFComponent,
+    PerlinNoiseComponent, WaveletComponent,
+)}
 
 def component_from_dict(data: dict) -> ProceduralComponent:
     """Restore one component from JSON-compatible data."""

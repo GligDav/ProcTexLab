@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.ndimage import zoom
 from scipy.optimize import minimize
-from .components import GaborComponent, GaussianRBFComponent, SinusoidComponent
+from .components import (GaborComponent, GaussianRBFComponent, PerlinNoiseComponent,
+                         SinusoidComponent, WaveletComponent)
 from .coordinates import coordinate_grid
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLoss
@@ -103,7 +104,18 @@ def _local_candidates(residual, config, dominant_frequency: float):
             out.extend(GaborComponent(center_u=cu, center_v=cv, sigma_u=.16, sigma_v=.10,
                                       frequency=dominant_frequency, orientation=o)
                        for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+        if "wavelet" in config.component_families:
+            out.extend(WaveletComponent(center_u=cu, center_v=cv, scale_u=s, scale_v=s)
+                       for s in (.05, .10, .20))
     return out
+
+def _perlin_candidates(config):
+    if "perlin_noise" not in config.component_families:
+        return []
+    frequencies = (2.0, 4.0, 8.0, 16.0)
+    return [PerlinNoiseComponent(frequency=f, octaves=3, seed=config.seed + index)
+            for index, f in enumerate(frequencies)
+            if config.min_frequency <= f <= config.max_frequency]
 
 def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     """Refine one atom against the translation-tolerant composite texture loss."""
@@ -117,6 +129,18 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma]
         bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5)]
         def make(p): return GaussianRBFComponent(p[0], p[1], p[2], p[3])
+    elif isinstance(atom, WaveletComponent):
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.scale_u,
+              atom.scale_v, atom.orientation]
+        bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5), (.015, .5),
+                  (-np.pi, np.pi)]
+        def make(p): return WaveletComponent(p[0], p[1], p[2], p[3], p[4], p[5])
+    elif isinstance(atom, PerlinNoiseComponent):
+        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
+        def make(p): return PerlinNoiseComponent(p[0], p[1], atom.octaves,
+                                                  atom.persistence, atom.lacunarity,
+                                                  p[2], p[3], atom.seed)
     else:
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
               atom.frequency, atom.orientation, atom.phase]
@@ -146,10 +170,14 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
         candidates = []
         if "sinusoid" in config.component_families:
             candidates.extend(_fft_sinusoid_candidates(residual, config, config.fft_candidates))
+        candidates.extend(_perlin_candidates(config))
         dominant = 0.0
-        if candidates:
-            dominant = float(np.hypot(candidates[0].frequency_u, candidates[0].frequency_v))
-            candidates = [_phase_sinusoid(x, residual, u, v) for x in candidates]
+        sinusoid_candidates = [x for x in candidates if isinstance(x, SinusoidComponent)]
+        if sinusoid_candidates:
+            dominant = float(np.hypot(sinusoid_candidates[0].frequency_u,
+                                      sinusoid_candidates[0].frequency_v))
+            for atom in sinusoid_candidates:
+                _phase_sinusoid(atom, residual, u, v)
         candidates.extend(_local_candidates(residual, config, dominant))
         if not candidates: break
         scored = []

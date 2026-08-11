@@ -2,7 +2,8 @@ import json
 import numpy as np
 import pytest
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
-    ProceduralTextureModel, SinusoidComponent, TextureFitter, normalize_image)
+    PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent, TextureFitter,
+    WaveletComponent, normalize_image)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
@@ -23,7 +24,8 @@ def test_coordinate_region_and_extended_evaluation():
     with pytest.raises(ValueError, match="upper bound"):
         model.evaluate_region(4, 4, (1, 1), (0, 1))
 
-@pytest.mark.parametrize("component", [SinusoidComponent(), GaborComponent(), GaussianRBFComponent()])
+@pytest.mark.parametrize("component", [SinusoidComponent(), GaborComponent(), GaussianRBFComponent(),
+                                        PerlinNoiseComponent(), WaveletComponent()])
 def test_components_are_finite(component):
     u,v=coordinate_grid(13,9); result=component.evaluate(u,v)
     assert result.shape == (9,13) and np.isfinite(result).all()
@@ -33,6 +35,37 @@ def test_model_sum_and_serialization(tmp_path):
     expected=model.evaluate(17,11); restored=ProceduralTextureModel.from_dict(json.loads(json.dumps(model.to_dict())))
     assert np.allclose(expected, restored.evaluate(17,11))
     path=tmp_path/"m.json"; model.save_json(path); assert np.allclose(expected, ProceduralTextureModel.load_json(path).evaluate(17,11))
+
+def test_perlin_is_seeded_and_wavelet_is_localized():
+    u, v = coordinate_grid(32, 24)
+    a = PerlinNoiseComponent(seed=7, octaves=3).basis(u, v)
+    b = PerlinNoiseComponent(seed=7, octaves=3).basis(u, v)
+    c = PerlinNoiseComponent(seed=8, octaves=3).basis(u, v)
+    assert np.array_equal(a, b) and not np.allclose(a, c)
+    wavelet = WaveletComponent(center_u=.5, center_v=.5, scale_u=.08, scale_v=.08)
+    values = wavelet.basis(u, v)
+    assert values[12, 16] == pytest.approx(1.0)
+    assert abs(values[0, 0]) < 1e-10
+
+@pytest.mark.parametrize("component", [PerlinNoiseComponent(.2, 5, 2, .6, 2.1, .1, -.2, 12),
+                                        WaveletComponent(-.3, .2, .7, .08, .15, .4)])
+def test_new_component_serialization(component):
+    model = ProceduralTextureModel(components=[component])
+    restored = ProceduralTextureModel.from_dict(json.loads(json.dumps(model.to_dict())))
+    assert type(restored.components[0]) is type(component)
+    assert np.allclose(model.evaluate(19, 17), restored.evaluate(19, 17))
+
+@pytest.mark.parametrize("family, component", [
+    ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
+    ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
+])
+def test_new_component_families_can_be_fitted(family, component):
+    image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)
+    config = FitConfig(component_families=(family,), max_components=1,
+                       max_iterations=5, fitting_resolution=None, seed=0)
+    result = TextureFitter(config).fit(image)
+    assert len(result.model.components) == 1
+    assert result.model.components[0].type_name == family
 
 def test_metrics_known():
     m=calculate_metrics(np.array([0.,1.]),np.array([0.,0.]))

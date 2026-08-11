@@ -22,7 +22,8 @@ class FitConfig:
     max_components: int = 8
     max_iterations: int = 40
     fitting_resolution: int | None = 96
-    component_families: tuple[str, ...] = ("sinusoid", "gabor", "gaussian_rbf")
+    component_families: tuple[str, ...] = ("sinusoid", "gabor", "gaussian_rbf",
+                                           "perlin_noise", "wavelet")
     fft_candidates: int = 24
     min_frequency: float = 0.5
     max_frequency: float = 24.0
@@ -34,7 +35,7 @@ class FitConfig:
     autocorrelation_weight: float = 0.75
     gradient_weight: float = 0.5
     def __post_init__(self):
-        allowed = {"sinusoid", "gabor", "gaussian_rbf"}
+        allowed = {"sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "wavelet"}
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
             raise ValueError("component/iteration/candidate counts are invalid")
         if self.fitting_resolution is not None and self.fitting_resolution < 8:
