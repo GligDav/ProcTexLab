@@ -22,6 +22,7 @@ result = TextureFitter(FitConfig(
     max_components=8,
     max_iterations=40,
     fitting_resolution=96,
+    decomposition_bands=5,
     seed=0,
 )).fit(image)
 
@@ -50,11 +51,11 @@ The kernel never imports GUI modules. Image I/O contains no optimizer logic.
 
 ## Fitting behavior and configuration
 
-The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, estimates DC and a plane, then iterates against the residual. A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized RBF and oriented Gabor atoms at several scales. Pixel residual correlation is used only to initialize candidates; it is not the optimization objective. Candidate selection, stopping, amplitude adjustment, and bounded nonlinear refinement minimize a weighted statistical texture loss composed of multi-scale log-power spectra, intensity-distribution CDF distance, normalized spatial autocorrelation, and periodic gradient magnitude/orientation statistics. Consequently, a translated but statistically equivalent texture can score well even with poor pixel-wise MSE.
+The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, and decomposes only the target into a reconstructable Laplacian pyramid. Each target band gets its own independently optimized procedural submodel and its own `max_components` atom budget. These submodels are added into the final `ProceduralTextureModel`; procedural candidates themselves are never decomposed during fitting. Thus 8 bands with `max_components=4` permit up to 32 atoms (fewer when a band reaches the configured stopping criterion early). A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized atoms at several scales. Pixel residual correlation initializes candidates, while selection and refinement minimize the configured statistical texture loss within the current band.
 
 The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, `gradient_weight`, and `mse_weight`. Defaults are `1.0`, `0.5`, `0.75`, `0.5`, and `1.0`. The reported `texture_loss` is the weighted mean, keeping its scale stable when all weights are multiplied by the same factor.
 
-Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the five texture-loss weights, and `fit_plane`. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata and reserved for stochastic dictionary extensions; the current dictionary is deterministic.
+Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the five texture-loss weights, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
@@ -110,6 +111,17 @@ python -m gui.texture_loss_calibrator
 The calibrator displays both normalized grayscale inputs, each raw loss component,
 its weighted term, and the final normalized `texture_loss`. Editing a weight
 automatically recalculates the result.
+
+To inspect the Laplacian pyramid used by the fitting objective, run:
+
+```bash
+python -m gui.decomposition_viewer
+```
+
+The viewer accepts any supported raster, exposes the band count and base Gaussian
+sigma, and displays the source, every signed frequency band, the reconstructed
+image, and the contrast-scaled reconstruction error. Band previews map zero to
+middle gray and report their numeric range and RMS energy.
 
 Run the self-contained synthetic example:
 

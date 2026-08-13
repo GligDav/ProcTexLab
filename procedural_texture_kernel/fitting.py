@@ -14,6 +14,7 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, WaveletComponent)
 from .coordinates import coordinate_grid
+from .decomposition import create_decomposition
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLoss
 
@@ -192,20 +193,19 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
                       options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})
     return make(result.x)
 
-def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
-                cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
-    """Fit using residual proposals and a composite statistical texture objective."""
-    started = time.perf_counter(); fit_target = _resize_for_fit(target, config.fitting_resolution)
-    h, w = fit_target.shape; u, v = coordinate_grid(w, h)
-    _notify(progress_callback, "initialization", 0, "Estimating DC and planar trend")
-    model = _initial_plane(fit_target, u, v, config.fit_plane, config.ridge)
-    loss = TextureLoss(fit_target, config.texture_loss_weights)
+def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
+              band_count: int, progress_callback=None,
+              cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
+    """Fit one target band without decomposing procedural candidates."""
+    h, w = target.shape; u, v = coordinate_grid(w, h)
+    model = _initial_plane(target, u, v, config.fit_plane, config.ridge)
+    loss = TextureLoss(target, config.texture_loss_weights)
     history = []
     for iteration in range(config.max_components):
         if cancel_callback is not None and cancel_callback():
             raise RuntimeError("fitting cancelled")
         current = model.evaluate_grid(u, v)
-        residual = fit_target - current
+        residual = target - current
         before, _ = loss.evaluate(current)
         candidates = []
         if "sinusoid" in config.component_families:
@@ -237,18 +237,65 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
         if before - after <= config.min_improvement:
             break
         model.add(chosen)
-        history.append({"iteration": iteration + 1, "family": chosen.type_name,
+        history.append({"band": band_index + 1, "iteration": iteration + 1,
+                        "family": chosen.type_name,
                         "texture_loss": after, "improvement": before - after, **parts})
-        _notify(progress_callback, "fitting", (iteration + 1) / max(config.max_components, 1),
-                f"Added {chosen.type_name} atom {iteration + 1}/{config.max_components}")
-    _notify(progress_callback, "complete", 1, "Fit complete")
+        completed = band_index * config.max_components + iteration + 1
+        total = max(band_count * config.max_components, 1)
+        _notify(progress_callback, "fitting", completed / total,
+                f"Band {band_index + 1}/{band_count}: added {chosen.type_name} "
+                f"atom {iteration + 1}/{config.max_components}")
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
+    return model, {"band": band_index + 1, "components": len(model.components),
+                   "iterations": history, "final_loss": final_loss,
+                   "loss_components": final_parts}
+
+
+def _combine_models(models: list[ProceduralTextureModel]) -> ProceduralTextureModel:
+    """Add independently fitted band models into one serializable model."""
+    return ProceduralTextureModel(
+        bias=sum(model.bias for model in models),
+        trend_u=sum(model.trend_u for model in models),
+        trend_v=sum(model.trend_v for model in models),
+        components=[component for model in models for component in model.components],
+    )
+
+
+def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
+                cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
+    """Decompose the target, fit every band independently, then add the models."""
+    started = time.perf_counter(); fit_target = _resize_for_fit(target, config.fitting_resolution)
+    h, w = fit_target.shape
+    decomposition = create_decomposition(config.decomposition_method,
+                                         config.decomposition_bands,
+                                         config.decomposition_base_sigma)
+    target_bands = decomposition.decompose(fit_target)
+    models = []
+    band_results = []
+    for band_index, band_target in enumerate(target_bands):
+        _notify(progress_callback, "initialization",
+                band_index / max(len(target_bands), 1),
+                f"Initializing band {band_index + 1}/{len(target_bands)}")
+        band_model, band_result = _fit_band(
+            band_target, config, band_index, len(target_bands),
+            progress_callback, cancel_callback)
+        models.append(band_model); band_results.append(band_result)
+    model = _combine_models(models)
+    _notify(progress_callback, "complete", 1, "Fit complete")
     weights = config.texture_loss_weights
+    band_losses = [result["final_loss"] for result in band_results]
+    history = [item for result in band_results for item in result["iterations"]]
     return model, {"fit_shape": [h, w], "components": len(model.components),
                    "iterations": history, "elapsed_seconds": time.perf_counter() - started,
                    "seed": config.seed,
-                   "objective": {"name": "composite_texture_loss", "final": final_loss,
-                                 "components": final_parts,
+                   "decomposition": {"method": config.decomposition_method,
+                                     "bands": config.decomposition_bands,
+                                     "base_sigma": config.decomposition_base_sigma,
+                                     "sigmas": list(getattr(decomposition, "sigmas", ()))},
+                   "bands": band_results,
+                   "objective": {"name": "independent_band_texture_loss",
+                                 "final": float(np.mean(band_losses)),
+                                 "band_losses": band_losses,
                                  "weights": {"spectrum": weights.spectrum,
                                              "histogram": weights.histogram,
                                              "autocorrelation": weights.autocorrelation,

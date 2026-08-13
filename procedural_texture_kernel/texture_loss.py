@@ -33,8 +33,10 @@ def _spectrum_features(image: np.ndarray) -> list[np.ndarray]:
         current = gaussian_filter(current, 1.0)[::2, ::2]
     return features
 
-def _histogram_feature(image: np.ndarray, bins: int = 64) -> np.ndarray:
-    histogram, _ = np.histogram(np.clip(image, 0, 1), bins=bins, range=(0, 1), density=False)
+def _histogram_feature(image: np.ndarray, value_range: tuple[float, float],
+                       bins: int = 64) -> np.ndarray:
+    histogram, _ = np.histogram(np.clip(image, *value_range), bins=bins,
+                                range=value_range, density=False)
     return np.cumsum(histogram, dtype=np.float64) / image.size
 
 def _autocorrelation_feature(image: np.ndarray) -> np.ndarray:
@@ -70,8 +72,10 @@ class TextureLoss:
         if self.reference.ndim != 2 or self.reference.size == 0:
             raise ValueError("texture loss expects a non-empty 2D image")
         self.weights = weights or TextureLossWeights()
+        low, high = float(np.min(self.reference)), float(np.max(self.reference))
+        self._histogram_range = (low, high) if high > low else (low - .5, high + .5)
         self._spectrum = _spectrum_features(self.reference)
-        self._histogram = _histogram_feature(self.reference)
+        self._histogram = _histogram_feature(self.reference, self._histogram_range)
         self._autocorrelation = _autocorrelation_feature(self.reference)
         self._gradient = _gradient_feature(self.reference)
 
@@ -81,7 +85,8 @@ class TextureLoss:
             raise ValueError("candidate must be finite and match the reference shape")
         spectra = _spectrum_features(image)
         spectrum = float(np.mean([np.mean((a-b) ** 2) for a, b in zip(self._spectrum, spectra)]))
-        histogram = float(np.mean(np.abs(self._histogram - _histogram_feature(image))))
+        histogram = float(np.mean(np.abs(
+            self._histogram - _histogram_feature(image, self._histogram_range))))
         autocorrelation = float(np.mean((self._autocorrelation - _autocorrelation_feature(image)) ** 2))
         gradient = float(np.mean(np.abs(self._gradient - _gradient_feature(image))))
         mse = float(np.mean((self.reference - image) ** 2))

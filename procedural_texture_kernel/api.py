@@ -7,6 +7,7 @@ from typing import Callable
 import math
 import numpy as np
 from .fitting import fit_texture
+from .decomposition import create_decomposition
 from .io import normalize_image
 from .metrics import calculate_metrics
 from .model import ProceduralTextureModel
@@ -41,6 +42,9 @@ class FitConfig:
     autocorrelation_weight: float = 0.75
     gradient_weight: float = 0.5
     mse_weight: float = 1.0
+    decomposition_method: str = "laplacian"
+    decomposition_bands: int = 5
+    decomposition_base_sigma: float = 1.0
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
@@ -56,6 +60,8 @@ class FitConfig:
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
                            self.mse_weight)
+        create_decomposition(self.decomposition_method, self.decomposition_bands,
+                             self.decomposition_base_sigma)
 
     @property
     def texture_loss_weights(self) -> TextureLossWeights:

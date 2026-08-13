@@ -97,7 +97,8 @@ def test_component_variants_and_seed_changes():
 def test_new_component_families_can_be_fitted(family, component):
     image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)
     config = FitConfig(component_families=(family,), max_components=1,
-                       max_iterations=5, fitting_resolution=None, seed=0)
+                       max_iterations=5, fitting_resolution=None, seed=0,
+                       decomposition_bands=1)
     result = TextureFitter(config).fit(image)
     assert len(result.model.components) == 1
     assert result.model.components[0].type_name == family
@@ -138,7 +139,8 @@ def test_normalization():
 
 def test_synthetic_fit_and_determinism():
     truth=ProceduralTextureModel(.5,components=[SinusoidComponent(.22,3,1,.35)])
-    image=truth.evaluate(48,32); config=FitConfig(max_components=2,fitting_resolution=None,max_iterations=30)
+    image=truth.evaluate(48,32); config=FitConfig(max_components=2,fitting_resolution=None,
+                                                  max_iterations=30, decomposition_bands=1)
     a=TextureFitter(config).fit(image); b=TextureFitter(config).fit(image)
     assert a.metrics["rmse"] < .015
     assert np.allclose(a.reconstruction,b.reconstruction)
@@ -156,3 +158,7 @@ def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS
     from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES
     assert set(SUPPORTED_COMPONENT_FAMILIES) <= set(ATOM_LABELS)
+
+def test_gui_defaults_to_five_decomposition_bands():
+    from gui.test_app import DEFAULT_DECOMPOSITION_BANDS
+    assert DEFAULT_DECOMPOSITION_BANDS == FitConfig().decomposition_bands == 5

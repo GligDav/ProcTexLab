@@ -3,6 +3,7 @@ from .api import FitConfig, FitResult, SUPPORTED_COMPONENT_FAMILIES, TextureFitt
 from .components import *
 from .io import load_image, normalize_image
 from .model import ProceduralTextureModel
+from .decomposition import ImageDecomposition, LaplacianPyramid, create_decomposition
 from .texture_loss import TextureLossWeights, calculate_texture_loss
 __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "ProceduralComponent", "SinusoidComponent", "GaborComponent",
@@ -16,3 +17,4 @@ __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "load_image", "normalize_image"]
 __all__ += ["TextureLossWeights", "calculate_texture_loss"]
 __all__ += ["SUPPORTED_COMPONENT_FAMILIES"]
+__all__ += ["ImageDecomposition", "LaplacianPyramid", "create_decomposition"]

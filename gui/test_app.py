@@ -21,6 +21,7 @@ ATOM_LABELS = {
     "spiral_wave": "Spiral wave", "sparse_impulse": "Sparse impulse / spot",
     "binary_primitive": "Binary primitives",
 }
+DEFAULT_DECOMPOSITION_BANDS = 5
 
 class TestApplication(tk.Tk):
     """Small visual harness; fitting runs on a worker thread."""
@@ -31,9 +32,11 @@ class TestApplication(tk.Tk):
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
         self.components = tk.IntVar(value=8); self.iterations = tk.IntVar(value=40)
         self.resolution = tk.IntVar(value=96); self.seed = tk.IntVar(value=0)
+        self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
-                                ("Fit resolution", self.resolution), ("Seed", self.seed),
+                                ("Fit resolution", self.resolution),
+                                ("Bands", self.decomposition_bands), ("Seed", self.seed),
                                 ("Min improvement", self.min_improvement)):
             ttk.Label(controls, text=label).pack(side="left", padx=(8,2))
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
@@ -141,6 +144,7 @@ class TestApplication(tk.Tk):
             raise ValueError("select at least one procedural atom family")
         return FitConfig(seed=self.seed.get(), max_components=self.components.get(),
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
+                         decomposition_bands=self.decomposition_bands.get(),
                          component_families=families,
                          min_improvement=self.min_improvement.get(),
                          spectrum_weight=self.spectrum_weight.get(),
