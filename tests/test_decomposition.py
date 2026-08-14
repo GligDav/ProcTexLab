@@ -34,6 +34,36 @@ def test_fitter_optimizes_each_target_band_independently():
         entry["components"] for entry in result.metadata["bands"])
 
 
+def test_fitter_estimates_and_records_weights_for_each_band():
+    y, x = np.indices((32, 40))
+    image = .5 + .2 * np.sin(2 * np.pi * x / 8) + .05 * np.random.default_rng(4).normal(size=x.shape)
+    result = TextureFitter(FitConfig(decomposition_bands=3, max_components=0,
+                                     fitting_resolution=None)).fit(image)
+    bands = result.metadata["bands"]
+    assert result.metadata["objective"]["weight_mode"] == "adaptive_per_band"
+    assert all("features" in band and "weights" in band for band in bands)
+    for band in bands:
+        statistical = [band["weights"][name] for name in
+                       ("spectrum", "histogram", "autocorrelation", "gradient")]
+        assert np.all(np.isfinite(statistical))
+        assert sum(statistical) == pytest.approx(1.0)
+        assert band["weights"]["mse"] == 1.0
+    assert bands[0]["weights"] != bands[-1]["weights"]
+
+
+def test_manual_band_weights_remain_available():
+    config = FitConfig(decomposition_bands=2, max_components=0,
+                       adaptive_texture_weights=False, spectrum_weight=2,
+                       histogram_weight=3, autocorrelation_weight=4,
+                       gradient_weight=5, mse_weight=6)
+    result = TextureFitter(config).fit(np.arange(64, dtype=float).reshape(8, 8))
+    assert result.metadata["objective"]["weight_mode"] == "manual"
+    assert all(band["weights"] == {"spectrum": 2, "histogram": 3,
+                                   "autocorrelation": 4, "gradient": 5, "mse": 6}
+               for band in result.metadata["bands"])
+    assert all("features" not in band for band in result.metadata["bands"])
+
+
 def test_decomposition_configuration_validation():
     with pytest.raises(ValueError, match="bands"):
         FitConfig(decomposition_bands=0)

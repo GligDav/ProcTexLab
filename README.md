@@ -54,9 +54,16 @@ The kernel never imports GUI modules. Image I/O contains no optimizer logic.
 
 The fitter converts inputs to float64 grayscale in `[0, 1]`, optionally downsamples only the fitting raster, and decomposes only the target into a reconstructable Laplacian pyramid. Each target band gets its own independently optimized procedural submodel and its own `max_components` atom budget. These submodels are added into the final `ProceduralTextureModel`; procedural candidates themselves are never decomposed during fitting. Thus 8 bands with `max_components=4` permit up to 32 atoms (fewer when a band reaches the configured stopping criterion early). A Hann-windowed FFT proposes global Fourier atoms. Residual extrema propose localized atoms at several scales. Pixel residual correlation initializes candidates, while selection and refinement minimize the configured statistical texture loss within the current band.
 
-The loss weights are exposed by `FitConfig` as `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, `gradient_weight`, and `mse_weight`. Defaults are `1.0`, `0.5`, `0.75`, `0.5`, and `1.0`. The reported `texture_loss` is the weighted mean, keeping its scale stable when all weights are multiplied by the same factor.
+By default, `adaptive_texture_weights=True` analyzes every decomposed target band
+and independently normalizes its spectrum, histogram, autocorrelation, and
+gradient weights. The configured `mse_weight` is added unchanged to each band
+objective. Extracted features and effective weights are recorded in each entry of
+`FitResult.metadata["bands"]`. Set `adaptive_texture_weights=False` to apply the
+manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
+`gradient_weight` values to every band. Their defaults remain `1.0`, `0.5`,
+`0.75`, and `0.5`; `mse_weight` defaults to `1.0`. Losses are weighted means.
 
-Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, the five texture-loss weights, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
+Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
@@ -100,7 +107,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. The five fields under **Texture loss weights** directly control the spectrum, histogram, autocorrelation, gradient, and MSE contributions. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:
@@ -139,9 +146,9 @@ importance to spectrum, heavy-tail importance to histogram, repetition importanc
 to autocorrelation, and directional importance to gradient, then normalize to one.
 These coefficients are heuristic starting values. Circular autocorrelation can
 reflect boundary discontinuities, tiny/constant bands carry little evidence, and
-the descriptors do not determine universally optimal loss weights. The estimator
-is intentionally not enabled by the fitter yet; future integration should analyze
-each target band immediately before its per-band `TextureLoss` is constructed.
+the descriptors do not determine universally optimal loss weights. The fitter now
+uses the estimator immediately before constructing each per-band `TextureLoss`.
+The extractor and mapper remain public and replaceable for future experiments.
 
 The viewer accepts any supported raster, exposes the band count and base Gaussian
 sigma, and displays the source, every signed frequency band, the reconstructed

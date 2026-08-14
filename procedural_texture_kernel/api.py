@@ -37,6 +37,7 @@ class FitConfig:
     min_improvement: float = 1e-6
     ridge: float = 1e-8
     fit_plane: bool = True
+    adaptive_texture_weights: bool = True
     spectrum_weight: float = 1.0
     histogram_weight: float = 0.5
     autocorrelation_weight: float = 0.75
@@ -65,7 +66,7 @@ class FitConfig:
 
     @property
     def texture_loss_weights(self) -> TextureLossWeights:
-        """Return the validated composite texture-loss weights."""
+        """Return manual weights and the full-image diagnostic weights."""
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                                   self.autocorrelation_weight, self.gradient_weight,
                                   self.mse_weight)

@@ -44,18 +44,27 @@ class TestApplication(tk.Tk):
         self.fit_button = ttk.Button(controls, text="Fit", command=self.fit); self.fit_button.pack(side="left")
         weight_controls = ttk.LabelFrame(self, text="Texture loss weights")
         weight_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.adaptive_weights = tk.BooleanVar(value=True)
+        ttk.Checkbutton(weight_controls, text="Estimate statistical weights per band",
+                        variable=self.adaptive_weights,
+                        command=self._update_weight_controls).pack(side="left", padx=(8, 4))
         self.spectrum_weight = tk.DoubleVar(value=1.0)
         self.histogram_weight = tk.DoubleVar(value=0.5)
         self.autocorrelation_weight = tk.DoubleVar(value=0.75)
         self.gradient_weight = tk.DoubleVar(value=0.5)
         self.mse_weight = tk.DoubleVar(value=1.0)
+        self.statistical_weight_entries = []
         for label, variable in (("Spectrum", self.spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
                                 ("Gradient", self.gradient_weight),
                                 ("MSE", self.mse_weight)):
             ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
-            ttk.Entry(weight_controls, textvariable=variable, width=8).pack(side="left")
+            entry = ttk.Entry(weight_controls, textvariable=variable, width=8)
+            entry.pack(side="left")
+            if variable is not self.mse_weight:
+                self.statistical_weight_entries.append(entry)
+        self._update_weight_controls()
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.atom_enabled = {
@@ -90,6 +99,11 @@ class TestApplication(tk.Tk):
         values = np.clip(values, 0, 1)
         image = Image.fromarray(np.uint8(values * 255), "L"); image.thumbnail((350, 470))
         photo = ImageTk.PhotoImage(image); self.images[slot] = photo; self.labels[slot].configure(image=photo)
+
+    def _update_weight_controls(self):
+        state = ["disabled"] if self.adaptive_weights.get() else ["!disabled"]
+        for entry in self.statistical_weight_entries:
+            entry.state(state)
 
     def _schedule_extent_preview(self, _value=None):
         extent = self.extent.get()
@@ -147,6 +161,7 @@ class TestApplication(tk.Tk):
                          decomposition_bands=self.decomposition_bands.get(),
                          component_families=families,
                          min_improvement=self.min_improvement.get(),
+                         adaptive_texture_weights=self.adaptive_weights.get(),
                          spectrum_weight=self.spectrum_weight.get(),
                          histogram_weight=self.histogram_weight.get(),
                          autocorrelation_weight=self.autocorrelation_weight.get(),
@@ -162,7 +177,9 @@ class TestApplication(tk.Tk):
                     result = event[1]; self.result = result
                     self._update_extent_preview(); self._show(result.residual, 2, True)
                     m = result.metrics
-                    self.status.configure(text=f"Texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f} (diagnostic)   PSNR {m['psnr']:.2f} dB")
+                    objective = result.metadata["objective"]
+                    mode = "adaptive per-band" if objective["weight_mode"] == "adaptive_per_band" else "manual"
+                    self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
                     self.running = False; self.fit_button.state(["!disabled"])
                 else:
                     messagebox.showerror("Fit failed", str(event[1])); self.running = False; self.fit_button.state(["!disabled"])
