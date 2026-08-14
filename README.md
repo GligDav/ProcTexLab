@@ -43,6 +43,7 @@ result.save_json("fit.json")
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
 - `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, gradient-statistics, and MSE objective.
+- `weight_estimator.py` independently describes a pyramid band and heuristically proposes normalized weights for the four statistical loss terms.
 - `api.py` exposes configuration, fitter, and result objects.
 - `io.py` handles raster loading and scalar normalization; `metrics.py` is reusable numerical evaluation.
 - `gui/test_app.py` and `examples/basic_usage.py` are replaceable clients of the public API.
@@ -117,6 +118,30 @@ To inspect the Laplacian pyramid used by the fitting objective, run:
 ```bash
 python -m gui.decomposition_viewer
 ```
+
+To inspect experimental per-band descriptors and weight proposals, run
+`python -m gui.weight_estimator_viewer`. The standalone API is:
+
+```python
+from procedural_texture_kernel import WeightEstimator
+
+result = WeightEstimator().analyze(pyramid_band)
+print(result.features.to_dict(), result.weights.to_dict())
+```
+
+Spectral entropy measures broadband energy, spectral anisotropy measures the
+directionality of frequency second moments, off-center autocorrelation measures
+repetition, gradient coherence measures aligned edge orientations, and normalized
+absolute excess kurtosis measures non-Gaussian/heavy-tailed amplitudes. Normalized
+descriptors are approximately `[0, 1]`; raw excess kurtosis is retained as a
+diagnostic. Configurable non-negative linear scores add broadband/anisotropic
+importance to spectrum, heavy-tail importance to histogram, repetition importance
+to autocorrelation, and directional importance to gradient, then normalize to one.
+These coefficients are heuristic starting values. Circular autocorrelation can
+reflect boundary discontinuities, tiny/constant bands carry little evidence, and
+the descriptors do not determine universally optimal loss weights. The estimator
+is intentionally not enabled by the fitter yet; future integration should analyze
+each target band immediately before its per-band `TextureLoss` is constructed.
 
 The viewer accepts any supported raster, exposes the band count and base Gaussian
 sigma, and displays the source, every signed frequency band, the reconstructed
