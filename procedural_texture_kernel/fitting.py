@@ -4,7 +4,7 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 import numpy as np
-from scipy.ndimage import zoom
+from scipy.ndimage import gaussian_filter, zoom
 from scipy.optimize import minimize
 from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
@@ -18,6 +18,7 @@ from .decomposition import create_decomposition
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLoss, TextureLossWeights
 from .weight_estimator import WeightEstimator
+from .spectral_diagnostics import compare_spectra
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -229,6 +230,14 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                       sinusoid_candidates[0].frequency_v))
             for atom in sinusoid_candidates:
                 _phase_sinusoid(atom, residual, u, v)
+        elif any(family in config.component_families
+                 for family in ("gabor", "radial_wave", "spiral_wave")):
+            # Oriented/local carriers still need a residual-derived frequency
+            # estimate when global sinusoid atoms themselves are disabled.
+            frequency_probes = _fft_sinusoid_candidates(residual, config, 1)
+            if frequency_probes:
+                dominant = float(np.hypot(frequency_probes[0].frequency_u,
+                                          frequency_probes[0].frequency_v))
         candidates.extend(_local_candidates(residual, config, dominant))
         if not candidates: break
         scored = []
@@ -280,6 +289,82 @@ def _combine_models(models: list[ProceduralTextureModel]) -> ProceduralTextureMo
     )
 
 
+def _high_frequency_energy(diagnostics: dict, side: str) -> float:
+    return float(sum(band[f"{side}_energy"] for band in diagnostics["bands"]
+                     if band["name"] in ("high", "very_high")))
+
+
+def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
+                           config: "FitConfig", progress_callback=None,
+                           cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
+    """Fit the high-pass reconstruction residual when diagnostics show a deficit."""
+    h, w = target.shape
+    before_image = model.evaluate(w, h)
+    before_diagnostics = compare_spectra(target, before_image)
+    metadata = {"enabled": True, "attempted": False, "accepted": False,
+                "threshold": config.detail_hf_ratio_threshold,
+                "before": before_diagnostics,
+                "components": 0}
+    if before_diagnostics["high_frequency_ratio"] >= config.detail_hf_ratio_threshold:
+        metadata["reason"] = "high_frequency_ratio_meets_threshold"
+        return model, metadata
+    families = tuple(family for family in config.detail_component_families
+                     if family in config.component_families)
+    if config.detail_max_components == 0:
+        metadata["reason"] = "zero_detail_component_budget"
+        return model, metadata
+    if not families:
+        metadata["reason"] = "no_enabled_detail_component_families"
+        return model, metadata
+    if cancel_callback is not None and cancel_callback():
+        raise RuntimeError("fitting cancelled")
+
+    residual = target - before_image
+    detail_target = residual - gaussian_filter(
+        residual, config.detail_base_sigma, mode="reflect")
+    detail_config = replace(
+        config, max_components=config.detail_max_components,
+        min_frequency=max(config.min_frequency, config.detail_min_frequency),
+        min_improvement=config.detail_min_improvement,
+        component_families=families, fit_plane=False,
+        adaptive_texture_weights=False, spectrum_weight=.25,
+        histogram_weight=0.0, autocorrelation_weight=.25,
+        gradient_weight=1.0, mse_weight=4.0,
+        detail_refinement=False,
+    )
+    metadata["attempted"] = True
+    metadata["component_families"] = list(families)
+    metadata["residual_rms"] = float(np.sqrt(np.mean(residual * residual)))
+    metadata["detail_target_rms"] = float(np.sqrt(np.mean(detail_target * detail_target)))
+    _notify(progress_callback, "detail_refinement", 0,
+            "Fitting high-frequency reconstruction residual")
+    detail_model, detail_result = _fit_band(
+        detail_target, detail_config, 0, 1, progress_callback, cancel_callback)
+    candidate_model = _combine_models([model, detail_model])
+    after_image = candidate_model.evaluate(w, h)
+    after_diagnostics = compare_spectra(target, after_image)
+    target_hf = _high_frequency_energy(before_diagnostics, "target")
+    before_error = abs(_high_frequency_energy(before_diagnostics, "result") - target_hf)
+    after_error = abs(_high_frequency_energy(after_diagnostics, "result") - target_hf)
+    before_mse = float(np.mean((target - before_image) ** 2))
+    after_mse = float(np.mean((target - after_image) ** 2))
+    accepted = (len(detail_model.components) > 0 and after_error < before_error
+                and after_mse <= before_mse + 1e-12)
+    metadata.update({"accepted": accepted, "after": after_diagnostics,
+                     "components": len(detail_model.components),
+                     "iterations": detail_result["iterations"],
+                     "loss_components": detail_result["loss_components"],
+                     "before_hf_absolute_error": before_error,
+                     "after_hf_absolute_error": after_error,
+                     "before_mse": before_mse, "after_mse": after_mse})
+    if not accepted:
+        metadata["reason"] = "candidate_did_not_improve_hf_energy_and_mse"
+        return model, metadata
+    _notify(progress_callback, "detail_refinement", 1,
+            f"Accepted {len(detail_model.components)} high-frequency detail atoms")
+    return candidate_model, metadata
+
+
 def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                 cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
     """Decompose the target, fit every band independently, then add the models."""
@@ -300,6 +385,12 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
             progress_callback, cancel_callback)
         models.append(band_model); band_results.append(band_result)
     model = _combine_models(models)
+    if config.detail_refinement:
+        model, detail_result = _refine_high_frequency(
+            fit_target, model, config, progress_callback, cancel_callback)
+    else:
+        detail_result = {"enabled": False, "attempted": False, "accepted": False,
+                         "reason": "disabled", "components": 0}
     _notify(progress_callback, "complete", 1, "Fit complete")
     band_losses = [result["final_loss"] for result in band_results]
     history = [item for result in band_results for item in result["iterations"]]
@@ -311,6 +402,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                      "base_sigma": config.decomposition_base_sigma,
                                      "sigmas": list(getattr(decomposition, "sigmas", ()))},
                    "bands": band_results,
+                   "detail_refinement": detail_result,
                    "objective": {"name": "independent_band_texture_loss",
                                  "final": float(np.mean(band_losses)),
                                  "band_losses": band_losses,

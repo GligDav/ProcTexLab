@@ -1,5 +1,6 @@
 """Raster-to-procedural-texture computational kernel."""
-from .api import FitConfig, FitResult, SUPPORTED_COMPONENT_FAMILIES, TextureFitter
+from .api import (DEFAULT_DETAIL_COMPONENT_FAMILIES, FitConfig, FitResult,
+                  SUPPORTED_COMPONENT_FAMILIES, TextureFitter)
 from .components import *
 from .io import load_image, normalize_image
 from .model import ProceduralTextureModel
@@ -22,6 +23,7 @@ __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
 __all__ += ["TextureLossWeights", "calculate_texture_loss"]
 __all__ += ["RadialPowerSpectrum", "radial_power_spectrum", "compare_spectra"]
 __all__ += ["SUPPORTED_COMPONENT_FAMILIES"]
+__all__ += ["DEFAULT_DETAIL_COMPONENT_FAMILIES"]
 __all__ += ["ImageDecomposition", "LaplacianPyramid", "create_decomposition"]
 __all__ += ["BandFeatureExtractor", "BandFeatures", "LossWeights", "WeightEstimator",
             "WeightEstimatorConfig", "WeightEstimatorResult", "WeightMappingConfig"]

@@ -69,3 +69,30 @@ def test_decomposition_configuration_validation():
         FitConfig(decomposition_bands=0)
     with pytest.raises(ValueError, match="unsupported decomposition"):
         create_decomposition("unknown")
+
+
+def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
+    y, x = np.indices((48, 48))
+    image = .5 + .2 * np.sin(2 * np.pi * x / 4)
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=0, fitting_resolution=None,
+        component_families=("sinusoid",), max_frequency=20,
+        detail_refinement=True, detail_max_components=1,
+        detail_min_frequency=8, detail_hf_ratio_threshold=.9,
+        max_iterations=20, min_improvement=0)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert detail["attempted"]
+    assert detail["accepted"]
+    assert detail["components"] == 1
+    assert detail["after_hf_absolute_error"] < detail["before_hf_absolute_error"]
+    assert detail["after_mse"] <= detail["before_mse"]
+
+
+def test_high_frequency_refinement_skips_when_threshold_is_met():
+    image = np.full((16, 16), .4)
+    result = TextureFitter(FitConfig(
+        max_components=0, fitting_resolution=None,
+        detail_refinement=True, detail_min_frequency=6)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert not detail["attempted"]
+    assert detail["reason"] == "high_frequency_ratio_meets_threshold"

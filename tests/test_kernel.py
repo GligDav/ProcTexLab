@@ -154,6 +154,24 @@ def test_min_improvement_validation(value):
     with pytest.raises(ValueError, match="min_improvement"):
         FitConfig(min_improvement=value)
 
+
+@pytest.mark.parametrize("kwargs", [
+    {"detail_max_components": -1},
+    {"detail_min_frequency": -1},
+    {"detail_min_improvement": -1},
+    {"detail_hf_ratio_threshold": 0},
+    {"detail_base_sigma": 0},
+    {"detail_component_families": ("unknown",)},
+])
+def test_detail_refinement_configuration_validation(kwargs):
+    with pytest.raises(ValueError):
+        FitConfig(**kwargs)
+
+
+def test_detail_minimum_frequency_must_fit_enabled_frequency_range():
+    with pytest.raises(ValueError, match="detail_min_frequency"):
+        FitConfig(detail_refinement=True, detail_min_frequency=24, max_frequency=24)
+
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS
     from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES

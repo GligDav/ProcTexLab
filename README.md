@@ -66,6 +66,16 @@ manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
+Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
+the normal multiband fit. It activates only when the fitting-resolution
+`high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters
+the signed reconstruction residual, and fits a separate budget of detail atoms.
+The candidate is retained only when both absolute HF-energy error and full-image
+MSE improve. Configuration includes `detail_max_components`,
+`detail_min_frequency`, `detail_min_improvement`, `detail_base_sigma`, and
+`detail_component_families`. Detailed before/after diagnostics and the acceptance
+decision are stored in `result.metadata["detail_refinement"]`.
+
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model

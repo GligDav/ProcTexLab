@@ -23,6 +23,9 @@ SUPPORTED_COMPONENT_FAMILIES = (
     "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
     "sparse_impulse", "binary_primitive", "simple_constant"
 )
+DEFAULT_DETAIL_COMPONENT_FAMILIES = (
+    "sinusoid", "gabor", "wavelet", "dog_log", "sparse_impulse", "line"
+)
 
 @dataclass(frozen=True)
 class FitConfig:
@@ -47,6 +50,13 @@ class FitConfig:
     decomposition_method: str = "laplacian"
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
+    detail_refinement: bool = False
+    detail_max_components: int = 4
+    detail_min_frequency: float = 6.0
+    detail_min_improvement: float = 1e-7
+    detail_hf_ratio_threshold: float = 0.85
+    detail_base_sigma: float = 1.0
+    detail_component_families: tuple[str, ...] = DEFAULT_DETAIL_COMPONENT_FAMILIES
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
@@ -59,6 +69,23 @@ class FitConfig:
             raise ValueError("min_improvement must be a finite, non-negative number")
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
+        if self.detail_max_components < 0:
+            raise ValueError("detail_max_components must be non-negative")
+        if (not math.isfinite(self.detail_min_frequency)
+                or self.detail_min_frequency < 0):
+            raise ValueError("detail_min_frequency must be finite and non-negative")
+        if self.detail_refinement and self.detail_min_frequency >= self.max_frequency:
+            raise ValueError("detail_min_frequency must be below max_frequency")
+        if (not math.isfinite(self.detail_min_improvement)
+                or self.detail_min_improvement < 0):
+            raise ValueError("detail_min_improvement must be finite and non-negative")
+        if (not math.isfinite(self.detail_hf_ratio_threshold)
+                or self.detail_hf_ratio_threshold <= 0):
+            raise ValueError("detail_hf_ratio_threshold must be finite and positive")
+        if not math.isfinite(self.detail_base_sigma) or self.detail_base_sigma <= 0:
+            raise ValueError("detail_base_sigma must be finite and positive")
+        if not set(self.detail_component_families) <= allowed:
+            raise ValueError("unsupported detail component family")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
                            self.mse_weight)

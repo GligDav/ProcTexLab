@@ -68,6 +68,19 @@ class TestApplication(tk.Tk):
             if variable is not self.mse_weight:
                 self.statistical_weight_entries.append(entry)
         self._update_weight_controls()
+        detail_controls = ttk.LabelFrame(self, text="High-frequency residual refinement")
+        detail_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.detail_refinement = tk.BooleanVar(value=True)
+        self.detail_components = tk.IntVar(value=4)
+        self.detail_min_frequency = tk.DoubleVar(value=6.0)
+        self.detail_hf_threshold = tk.DoubleVar(value=.85)
+        ttk.Checkbutton(detail_controls, text="Enable when HF ratio is below threshold",
+                        variable=self.detail_refinement).pack(side="left", padx=8)
+        for label, variable in (("Detail atoms", self.detail_components),
+                                ("Min frequency", self.detail_min_frequency),
+                                ("HF threshold", self.detail_hf_threshold)):
+            ttk.Label(detail_controls, text=label).pack(side="left", padx=(12, 2))
+            ttk.Entry(detail_controls, textvariable=variable, width=7).pack(side="left")
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.atom_enabled = {
@@ -176,7 +189,11 @@ class TestApplication(tk.Tk):
                          histogram_weight=self.histogram_weight.get(),
                          autocorrelation_weight=self.autocorrelation_weight.get(),
                          gradient_weight=self.gradient_weight.get(),
-                         mse_weight=self.mse_weight.get())
+                         mse_weight=self.mse_weight.get(),
+                         detail_refinement=self.detail_refinement.get(),
+                         detail_max_components=self.detail_components.get(),
+                         detail_min_frequency=self.detail_min_frequency.get(),
+                         detail_hf_ratio_threshold=self.detail_hf_threshold.get())
 
     def _poll(self):
         try:
@@ -190,7 +207,10 @@ class TestApplication(tk.Tk):
                     m = result.metrics
                     objective = result.metadata["objective"]
                     mode = "adaptive per-band" if objective["weight_mode"] == "adaptive_per_band" else "manual"
-                    self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
+                    detail = result.metadata["detail_refinement"]
+                    detail_text = (f"detail +{detail['components']}" if detail["accepted"]
+                                   else f"detail {detail.get('reason', 'not accepted')}")
+                    self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   {detail_text}   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
                     self.running = False; self.fit_button.state(["!disabled"])
                 else:
                     messagebox.showerror("Fit failed", str(event[1])); self.running = False; self.fit_button.state(["!disabled"])
