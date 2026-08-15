@@ -9,7 +9,7 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     FractalBrownianMotionComponent, LineComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent)
+    VoronoiNoiseComponent, SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
@@ -67,7 +67,7 @@ def test_new_component_serialization(component):
     DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
-    BinaryPrimitiveComponent(),
+    BinaryPrimitiveComponent(), SimpleConstantComponent(),
 ])
 def test_extended_components_are_finite_deterministic_and_serializable(component):
     u, v = coordinate_grid(23, 17)

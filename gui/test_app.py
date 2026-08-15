@@ -19,7 +19,7 @@ ATOM_LABELS = {
     "step_edge": "Step / sigmoid edge", "dog_log": "DoG / LoG",
     "polynomial_trend": "Polynomial trend", "radial_wave": "Radial wave",
     "spiral_wave": "Spiral wave", "sparse_impulse": "Sparse impulse / spot",
-    "binary_primitive": "Binary primitives",
+    "binary_primitive": "Binary primitives", "simple_constant": "Simple constant",
 }
 DEFAULT_DECOMPOSITION_BANDS = 5
 

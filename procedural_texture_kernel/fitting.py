@@ -12,7 +12,7 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent, WaveletComponent)
+    VoronoiNoiseComponent, WaveletComponent, SimpleConstantComponent)
 from .coordinates import coordinate_grid
 from .decomposition import create_decomposition
 from .model import ProceduralTextureModel
@@ -137,6 +137,8 @@ def _local_candidates(residual, config, dominant_frequency: float):
         if "binary_primitive" in config.component_families:
             out.extend(BinaryPrimitiveComponent(center_u=cu, center_v=cv, shape=shape)
                        for shape in ("disk", "box", "ring"))
+        if "simple_constant" in config.component_families:
+            out.append(SimpleConstantComponent(value=float(residual[iy, ix])))
     if "polynomial_trend" in config.component_families:
         out.append(PolynomialTrendComponent())
     if "sparse_impulse" in config.component_families:

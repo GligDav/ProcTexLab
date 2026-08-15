@@ -20,7 +20,7 @@ SUPPORTED_COMPONENT_FAMILIES = (
     "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
     "domain_warped_noise", "anisotropic_gaussian", "line", "step_edge",
     "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
-    "sparse_impulse", "binary_primitive"
+    "sparse_impulse", "binary_primitive", "simple_constant"
 )
 
 @dataclass(frozen=True)

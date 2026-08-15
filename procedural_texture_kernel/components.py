@@ -335,6 +335,14 @@ class BinaryPrimitiveComponent(ProceduralComponent):
         else: raise ValueError("shape must be 'disk', 'box', 'ring', or 'checker'")
         return mask.astype(float)
 
+@dataclass
+class SimpleConstantComponent(ProceduralComponent):
+    """Simple, monochromic constant component."""
+    value:float = 0.0
+    type_name: ClassVar[str] = "simple_constant"
+    def basis(self, u, v):
+        return np.ones(np.broadcast_shapes(np.shape(u), np.shape(v))) * self.value
+
 COMPONENT_TYPES = {c.type_name: c for c in (
     SinusoidComponent, GaborComponent, GaussianRBFComponent,
     PerlinNoiseComponent, WaveletComponent,
@@ -342,7 +350,7 @@ COMPONENT_TYPES = {c.type_name: c for c in (
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,
     DifferenceOfGaussiansComponent, PolynomialTrendComponent, RadialWaveComponent,
-    SpiralWaveComponent, SparseImpulseComponent, BinaryPrimitiveComponent,
+    SpiralWaveComponent, SparseImpulseComponent, BinaryPrimitiveComponent, SimpleConstantComponent,
 )}
 
 def component_from_dict(data: dict) -> ProceduralComponent:
