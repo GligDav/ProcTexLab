@@ -117,6 +117,10 @@ python -m gui.test_app
 
 It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
+After a fit, the **Spectrum** button opens the full-resolution target/result
+diagnostics: absolute radial PSD curves on a logarithmic scale, per-band absolute
+and normalized energies, and the combined high-frequency energy ratio.
+
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:
 

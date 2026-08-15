@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ImageTk
 from procedural_texture_kernel import (FitConfig, SUPPORTED_COMPONENT_FAMILIES,
                                        TextureFitter, load_image)
+from .spectral_diagnostics_viewer import SpectralDiagnosticsDialog
 
 ATOM_LABELS = {
     "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
@@ -42,6 +43,8 @@ class TestApplication(tk.Tk):
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
         ttk.Button(controls, text="Load Image", command=self.load).pack(side="left", padx=8)
         self.fit_button = ttk.Button(controls, text="Fit", command=self.fit); self.fit_button.pack(side="left")
+        self.spectrum_button = ttk.Button(controls, text="Spectrum", command=self.show_spectrum)
+        self.spectrum_button.pack(side="left", padx=(8, 0)); self.spectrum_button.state(["disabled"])
         weight_controls = ttk.LabelFrame(self, text="Texture loss weights")
         weight_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.adaptive_weights = tk.BooleanVar(value=True)
@@ -133,6 +136,7 @@ class TestApplication(tk.Tk):
         try: self.source = load_image(path)
         except ValueError as exc: messagebox.showerror("Load failed", str(exc)); return
         self.result = None; self.extent.set(1.0); self._show(self.source, 0)
+        self.spectrum_button.state(["disabled"])
         self.extent_value.configure(text="1.0×  ([0, 1)²)")
         self.status.configure(text=f"Loaded {self.source.shape[1]} × {self.source.shape[0]}")
 
@@ -149,6 +153,12 @@ class TestApplication(tk.Tk):
                 self.events.put(("result", result))
             except Exception as exc: self.events.put(("error", exc))
         threading.Thread(target=worker, daemon=True).start(); self.after(50, self._poll)
+
+    def show_spectrum(self):
+        if self.result is None:
+            return
+        SpectralDiagnosticsDialog(
+            self, self.result.metadata["spectral_diagnostics"])
 
     def _build_config(self) -> FitConfig:
         """Read and validate all editable fitting controls."""
@@ -175,6 +185,7 @@ class TestApplication(tk.Tk):
                 if event[0] == "progress": self.progress["value"] = event[1] * 100; self.status.configure(text=event[2])
                 elif event[0] == "result":
                     result = event[1]; self.result = result
+                    self.spectrum_button.state(["!disabled"])
                     self._update_extent_preview(); self._show(result.residual, 2, True)
                     m = result.metrics
                     objective = result.metadata["objective"]
