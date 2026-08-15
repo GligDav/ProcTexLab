@@ -57,6 +57,8 @@ class FitConfig:
     detail_hf_ratio_threshold: float = 0.85
     detail_base_sigma: float = 1.0
     detail_component_families: tuple[str, ...] = DEFAULT_DETAIL_COMPONENT_FAMILIES
+    joint_amplitude_refit: bool = True
+    amplitude_refit_interval: int = 2
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
@@ -86,6 +88,10 @@ class FitConfig:
             raise ValueError("detail_base_sigma must be finite and positive")
         if not set(self.detail_component_families) <= allowed:
             raise ValueError("unsupported detail component family")
+        if (isinstance(self.amplitude_refit_interval, bool)
+                or not isinstance(self.amplitude_refit_interval, int)
+                or self.amplitude_refit_interval < 1):
+            raise ValueError("amplitude_refit_interval must be a positive integer")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
                            self.mse_weight)

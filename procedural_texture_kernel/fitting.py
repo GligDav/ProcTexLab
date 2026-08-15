@@ -34,10 +34,13 @@ def _resize_for_fit(image: np.ndarray, limit: int | None) -> np.ndarray:
     shape = (max(8, round(image.shape[0] * factor)), max(8, round(image.shape[1] * factor)))
     return zoom(image, (shape[0] / image.shape[0], shape[1] / image.shape[1]), order=1)
 
-def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float) -> None:
+def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float,
+                  include_plane: bool | None = None) -> None:
     """Initialize global DC/plane coefficients with stable least squares."""
+    if include_plane is None:
+        include_plane = model.trend_u != 0 or model.trend_v != 0
     columns = [np.ones(target.size)]
-    if model.trend_u != 0 or model.trend_v != 0:
+    if include_plane:
         columns.extend([(u - .5).ravel(), (v - .5).ravel()])
     columns.extend(c.basis(u, v).ravel() for c in model.components)
     design = np.column_stack(columns)
@@ -48,7 +51,7 @@ def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge
         design_aug, target_aug = design, target.ravel()
     coefficients = np.linalg.lstsq(design_aug, target_aug, rcond=None)[0]
     model.bias = float(coefficients[0]); index = 1
-    if model.trend_u != 0 or model.trend_v != 0:
+    if include_plane:
         model.trend_u, model.trend_v = map(float, coefficients[index:index + 2]); index += 2
     for component, amplitude in zip(model.components, coefficients[index:]):
         component.amplitude = float(amplitude)
@@ -56,8 +59,28 @@ def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge
 def _initial_plane(target, u, v, enabled: bool, ridge: float) -> ProceduralTextureModel:
     model = ProceduralTextureModel(trend_u=1.0 if enabled else 0.0,
                                    trend_v=1.0 if enabled else 0.0)
-    _solve_linear(model, target, u, v, ridge)
+    _solve_linear(model, target, u, v, ridge, include_plane=enabled)
     return model
+
+
+def _refit_linear_amplitudes(model: ProceduralTextureModel, target: np.ndarray,
+                             loss: TextureLoss, u, v, ridge: float,
+                             include_plane: bool) -> dict:
+    """Jointly refit all linear coefficients and retain only objective improvements."""
+    before, _ = loss.evaluate(model.evaluate_grid(u, v))
+    snapshot = (model.bias, model.trend_u, model.trend_v,
+                [component.amplitude for component in model.components])
+    _solve_linear(model, target, u, v, ridge, include_plane=include_plane)
+    after, _ = loss.evaluate(model.evaluate_grid(u, v))
+    accepted = after <= before + 1e-15
+    if not accepted:
+        model.bias, model.trend_u, model.trend_v = snapshot[:3]
+        for component, amplitude in zip(model.components, snapshot[3]):
+            component.amplitude = amplitude
+        after = before
+    return {"attempted": True, "accepted": accepted,
+            "before": before, "after": after,
+            "improvement": before - after}
 
 def _fft_sinusoid_candidates(residual, config, count: int):
     """Use a Hann window to suppress non-periodic boundary leakage."""
@@ -257,17 +280,31 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         if before - after <= config.min_improvement:
             break
         model.add(chosen)
+        amplitude_refit = {"attempted": False, "accepted": False,
+                           "before": after, "after": after, "improvement": 0.0}
+        if (config.joint_amplitude_refit
+                and (iteration + 1) % config.amplitude_refit_interval == 0):
+            amplitude_refit = _refit_linear_amplitudes(
+                model, target, loss, u, v, config.ridge, config.fit_plane)
+            after, parts = loss.evaluate(model.evaluate_grid(u, v))
         history.append({"band": band_index + 1, "iteration": iteration + 1,
                         "family": chosen.type_name,
-                        "texture_loss": after, "improvement": before - after, **parts})
+                        "texture_loss": after, "improvement": before - after,
+                        "amplitude_refit": amplitude_refit, **parts})
         completed = band_index * config.max_components + iteration + 1
         total = max(band_count * config.max_components, 1)
         _notify(progress_callback, "fitting", completed / total,
                 f"Band {band_index + 1}/{band_count}: added {chosen.type_name} "
                 f"atom {iteration + 1}/{config.max_components}")
+    final_refit = {"attempted": False, "accepted": False}
+    if (config.joint_amplitude_refit and model.components
+            and len(model.components) % config.amplitude_refit_interval != 0):
+        final_refit = _refit_linear_amplitudes(
+            model, target, loss, u, v, config.ridge, config.fit_plane)
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
     result = {"band": band_index + 1, "components": len(model.components),
                    "iterations": history, "final_loss": final_loss,
+                   "final_amplitude_refit": final_refit,
                    "loss_components": final_parts,
                    "weights": {"spectrum": weights.spectrum,
                                "histogram": weights.histogram,

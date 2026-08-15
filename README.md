@@ -76,6 +76,12 @@ MSE improve. Configuration includes `detail_max_components`,
 `detail_component_families`. Detailed before/after diagnostics and the acceptance
 decision are stored in `result.metadata["detail_refinement"]`.
 
+With `joint_amplitude_refit=True` (the default), the fitter periodically solves
+all linear atom amplitudes, bias, and plane coefficients together. The refit runs
+after every `amplitude_refit_interval` accepted atoms and once at the end when
+needed. A refitted state is retained only if the complete band texture objective
+does not increase. Each decision is recorded in the band iteration metadata.
+
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model

@@ -81,6 +81,16 @@ class TestApplication(tk.Tk):
                                 ("HF threshold", self.detail_hf_threshold)):
             ttk.Label(detail_controls, text=label).pack(side="left", padx=(12, 2))
             ttk.Entry(detail_controls, textvariable=variable, width=7).pack(side="left")
+        refit_controls = ttk.LabelFrame(self, text="Joint atom amplitude refinement")
+        refit_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.joint_amplitude_refit = tk.BooleanVar(value=True)
+        self.amplitude_refit_interval = tk.IntVar(value=2)
+        ttk.Checkbutton(refit_controls, text="Jointly refit amplitudes",
+                        variable=self.joint_amplitude_refit).pack(side="left", padx=8)
+        ttk.Label(refit_controls, text="Every N accepted atoms").pack(
+            side="left", padx=(12, 2))
+        ttk.Entry(refit_controls, textvariable=self.amplitude_refit_interval,
+                  width=7).pack(side="left")
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.atom_enabled = {
@@ -193,7 +203,9 @@ class TestApplication(tk.Tk):
                          detail_refinement=self.detail_refinement.get(),
                          detail_max_components=self.detail_components.get(),
                          detail_min_frequency=self.detail_min_frequency.get(),
-                         detail_hf_ratio_threshold=self.detail_hf_threshold.get())
+                         detail_hf_ratio_threshold=self.detail_hf_threshold.get(),
+                         joint_amplitude_refit=self.joint_amplitude_refit.get(),
+                         amplitude_refit_interval=self.amplitude_refit_interval.get())
 
     def _poll(self):
         try:

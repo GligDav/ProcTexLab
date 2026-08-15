@@ -96,3 +96,20 @@ def test_high_frequency_refinement_skips_when_threshold_is_met():
     detail = result.metadata["detail_refinement"]
     assert not detail["attempted"]
     assert detail["reason"] == "high_frequency_ratio_meets_threshold"
+
+
+def test_joint_amplitude_refit_is_recorded_and_never_worsens_band_objective():
+    y, x = np.indices((32, 40))
+    image = (.5 + .18 * np.sin(2 * np.pi * x / 8)
+             + .1 * np.sin(2 * np.pi * (x + y) / 10))
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=2, fitting_resolution=None,
+        component_families=("sinusoid",), min_improvement=0,
+        joint_amplitude_refit=True, amplitude_refit_interval=1,
+        max_iterations=10)).fit(image)
+    iterations = result.metadata["bands"][0]["iterations"]
+    assert iterations
+    assert all(item["amplitude_refit"]["attempted"] for item in iterations)
+    assert all(item["amplitude_refit"]["after"]
+               <= item["amplitude_refit"]["before"] + 1e-15
+               for item in iterations)

@@ -172,6 +172,12 @@ def test_detail_minimum_frequency_must_fit_enabled_frequency_range():
     with pytest.raises(ValueError, match="detail_min_frequency"):
         FitConfig(detail_refinement=True, detail_min_frequency=24, max_frequency=24)
 
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_amplitude_refit_interval_validation(value):
+    with pytest.raises(ValueError, match="amplitude_refit_interval"):
+        FitConfig(amplitude_refit_interval=value)
+
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS
     from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES
