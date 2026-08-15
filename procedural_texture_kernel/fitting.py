@@ -16,7 +16,8 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
 from .coordinates import coordinate_grid
 from .decomposition import create_decomposition
 from .model import ProceduralTextureModel
-from .texture_loss import TextureLoss
+from .texture_loss import TextureLoss, TextureLossWeights
+from .weight_estimator import WeightEstimator
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -199,7 +200,15 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
     """Fit one target band without decomposing procedural candidates."""
     h, w = target.shape; u, v = coordinate_grid(w, h)
     model = _initial_plane(target, u, v, config.fit_plane, config.ridge)
-    loss = TextureLoss(target, config.texture_loss_weights)
+    analysis = WeightEstimator().analyze(target) if config.adaptive_texture_weights else None
+    if analysis is None:
+        weights = config.texture_loss_weights
+    else:
+        estimated = analysis.weights
+        weights = TextureLossWeights(estimated.spectrum, estimated.histogram,
+                                     estimated.autocorrelation, estimated.gradient,
+                                     config.mse_weight)
+    loss = TextureLoss(target, weights)
     history = []
     for iteration in range(config.max_components):
         if cancel_callback is not None and cancel_callback():
@@ -246,9 +255,17 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                 f"Band {band_index + 1}/{band_count}: added {chosen.type_name} "
                 f"atom {iteration + 1}/{config.max_components}")
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
-    return model, {"band": band_index + 1, "components": len(model.components),
+    result = {"band": band_index + 1, "components": len(model.components),
                    "iterations": history, "final_loss": final_loss,
-                   "loss_components": final_parts}
+                   "loss_components": final_parts,
+                   "weights": {"spectrum": weights.spectrum,
+                               "histogram": weights.histogram,
+                               "autocorrelation": weights.autocorrelation,
+                               "gradient": weights.gradient,
+                               "mse": weights.mse}}
+    if analysis is not None:
+        result["features"] = analysis.features.to_dict()
+    return model, result
 
 
 def _combine_models(models: list[ProceduralTextureModel]) -> ProceduralTextureModel:
@@ -282,7 +299,6 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
         models.append(band_model); band_results.append(band_result)
     model = _combine_models(models)
     _notify(progress_callback, "complete", 1, "Fit complete")
-    weights = config.texture_loss_weights
     band_losses = [result["final_loss"] for result in band_results]
     history = [item for result in band_results for item in result["iterations"]]
     return model, {"fit_shape": [h, w], "components": len(model.components),
@@ -296,8 +312,8 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "objective": {"name": "independent_band_texture_loss",
                                  "final": float(np.mean(band_losses)),
                                  "band_losses": band_losses,
-                                 "weights": {"spectrum": weights.spectrum,
-                                             "histogram": weights.histogram,
-                                             "autocorrelation": weights.autocorrelation,
-                                             "gradient": weights.gradient,
-                                             "mse": weights.mse}}}
+                                 "weight_mode": ("adaptive_per_band" if
+                                    config.adaptive_texture_weights else "manual"),
+                                 "mse_weight": config.mse_weight,
+                                 "band_weights": [result["weights"]
+                                                  for result in band_results]}}

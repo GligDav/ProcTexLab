@@ -5,6 +5,9 @@ from .io import load_image, normalize_image
 from .model import ProceduralTextureModel
 from .decomposition import ImageDecomposition, LaplacianPyramid, create_decomposition
 from .texture_loss import TextureLossWeights, calculate_texture_loss
+from .weight_estimator import (BandFeatureExtractor, BandFeatures, LossWeights,
+                               WeightEstimator, WeightEstimatorConfig,
+                               WeightEstimatorResult, WeightMappingConfig)
 __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "ProceduralComponent", "SinusoidComponent", "GaborComponent",
            "GaussianRBFComponent", "PerlinNoiseComponent", "WaveletComponent",
@@ -18,3 +21,5 @@ __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
 __all__ += ["TextureLossWeights", "calculate_texture_loss"]
 __all__ += ["SUPPORTED_COMPONENT_FAMILIES"]
 __all__ += ["ImageDecomposition", "LaplacianPyramid", "create_decomposition"]
+__all__ += ["BandFeatureExtractor", "BandFeatures", "LossWeights", "WeightEstimator",
+            "WeightEstimatorConfig", "WeightEstimatorResult", "WeightMappingConfig"]
