@@ -12,6 +12,7 @@ from .io import normalize_image
 from .metrics import calculate_metrics
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLossWeights, calculate_texture_loss
+from .spectral_diagnostics import compare_spectra
 
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
@@ -104,5 +105,6 @@ class TextureFitter:
         reconstruction = model.evaluate(target.shape[1], target.shape[0])
         metrics = calculate_metrics(target, reconstruction)
         metrics.update(calculate_texture_loss(target, reconstruction, self.config.texture_loss_weights))
+        metadata["spectral_diagnostics"] = compare_spectra(target, reconstruction)
         return FitResult(model, metrics, reconstruction,
                          target - reconstruction, metadata)
