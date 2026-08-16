@@ -115,7 +115,7 @@ model.add(WaveletComponent(amplitude=-0.1, center_u=0.4, center_v=0.6, scale_u=0
 
 2D grayscale and 3/4-channel RGB(A) arrays are accepted. Integer formats (including uint16) are divided by their dtype range; floating inputs already in `[0, 1]` are preserved, while out-of-range finite values are min/max normalized. RGB uses linear coefficients 0.2126/0.7152/0.0722; alpha is ignored. Empty, malformed, NaN, and infinite inputs raise descriptive errors.
 
-The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, `gradient_loss`, `local_structure_loss`, and `mse_loss`. MSE is also part of the configurable fitting objective; RMSE, MAE, PSNR, normalized RMSE, and correlation remain available as diagnostics.
+The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, multiscale `gradient_loss`, `local_contrast_loss`, `local_structure_loss`, and `mse_loss`. The optional local-contrast term compares local standard-deviation distributions at several Gaussian scales and is controlled by `local_contrast_weight`. MSE is also part of the configurable fitting objective; RMSE, MAE, PSNR, normalized RMSE, and correlation remain available as diagnostics.
 
 The optional local-structure objective uses a cached multiscale, oriented complex
 filter bank. It compares response magnitude distributions, correlations between

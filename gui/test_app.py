@@ -57,18 +57,20 @@ class TestApplication(tk.Tk):
         self.gradient_weight = tk.DoubleVar(value=0.5)
         self.mse_weight = tk.DoubleVar(value=1.0)
         self.local_structure_weight = tk.DoubleVar(value=0.5)
+        self.local_contrast_weight = tk.DoubleVar(value=0.5)
         self.statistical_weight_entries = []
         for label, variable in (("Spectrum", self.spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
                                 ("Gradient", self.gradient_weight),
                                 ("MSE", self.mse_weight),
-                                ("Local structure", self.local_structure_weight)):
+                                ("Local structure", self.local_structure_weight),
+                                ("Local contrast", self.local_contrast_weight)):
             ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
             entry = ttk.Entry(weight_controls, textvariable=variable, width=8)
             entry.pack(side="left")
-            if (variable is not self.mse_weight
-                    and variable is not self.local_structure_weight):
+            if variable not in (self.mse_weight, self.local_structure_weight,
+                                self.local_contrast_weight):
                 self.statistical_weight_entries.append(entry)
         self._update_weight_controls()
         detail_controls = ttk.LabelFrame(self, text="High-frequency residual refinement")
@@ -204,6 +206,7 @@ class TestApplication(tk.Tk):
                          gradient_weight=self.gradient_weight.get(),
                          mse_weight=self.mse_weight.get(),
                          local_structure_weight=self.local_structure_weight.get(),
+                         local_contrast_weight=self.local_contrast_weight.get(),
                          detail_refinement=self.detail_refinement.get(),
                          detail_max_components=self.detail_components.get(),
                          detail_min_frequency=self.detail_min_frequency.get(),

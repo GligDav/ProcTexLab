@@ -266,7 +266,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         estimated = analysis.weights
         weights = TextureLossWeights(estimated.spectrum, estimated.histogram,
                                      estimated.autocorrelation, estimated.gradient,
-                                     config.mse_weight, config.local_structure_weight)
+                                     config.mse_weight, config.local_structure_weight,
+                                     config.local_contrast_weight)
     loss = TextureLoss(target, weights,
                        config.local_structure_scales,
                        config.local_structure_orientations,
@@ -353,8 +354,9 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                "histogram": weights.histogram,
                                "autocorrelation": weights.autocorrelation,
                                "gradient": weights.gradient,
-                               "mse": weights.mse,
-                               "local_structure": weights.local_structure}}
+                                "mse": weights.mse,
+                                "local_structure": weights.local_structure,
+                                "local_contrast": weights.local_contrast}}
     if analysis is not None:
         result["features"] = analysis.features.to_dict()
     return model, result
@@ -490,6 +492,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                  "weight_mode": ("adaptive_per_band" if
                                     config.adaptive_texture_weights else "manual"),
                                  "mse_weight": config.mse_weight,
+                                 "local_contrast_weight": config.local_contrast_weight,
                                  "local_structure": {
                                      "weight": config.local_structure_weight,
                                      "scales": config.local_structure_scales,

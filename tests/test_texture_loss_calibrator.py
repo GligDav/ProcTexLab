@@ -17,6 +17,7 @@ def test_calibrator_declares_mse_weight():
     from gui.texture_loss_calibrator import WEIGHTS
     assert ("MSE", "mse", "mse_loss", 1.0) in WEIGHTS
     assert ("Local structure", "local_structure", "local_structure_loss", 0.0) in WEIGHTS
+    assert ("Local contrast", "local_contrast", "local_contrast_loss", 0.0) in WEIGHTS
 
 
 def test_evaluate_images_rejects_different_dimensions():

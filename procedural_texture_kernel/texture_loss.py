@@ -14,10 +14,11 @@ class TextureLossWeights:
     gradient: float = 0.5
     mse: float = 1.0
     local_structure: float = 0.0
+    local_contrast: float = 0.0
 
     def __post_init__(self):
         values = (self.spectrum, self.histogram, self.autocorrelation, self.gradient,
-                  self.mse, self.local_structure)
+                  self.mse, self.local_structure, self.local_contrast)
         if not all(np.isfinite(values)) or any(value < 0 for value in values):
             raise ValueError("texture loss weights must be finite and non-negative")
         if sum(values) <= 0:
@@ -54,19 +55,47 @@ def _autocorrelation_feature(image: np.ndarray) -> np.ndarray:
     cy, cx = image.shape[0] // 2, image.shape[1] // 2
     return correlation[cy-radius_y:cy+radius_y+1, cx-radius_x:cx+radius_x+1]
 
-def _gradient_feature(image: np.ndarray) -> np.ndarray:
-    # Periodic differences make these statistics invariant to cyclic translation.
-    dx = np.roll(image, -1, axis=1) - image
-    dy = np.roll(image, -1, axis=0) - image
-    magnitude = np.hypot(dx, dy)
-    scale = max(float(np.percentile(magnitude, 99)), 1e-12)
-    magnitude_hist, _ = np.histogram(np.clip(magnitude / scale, 0, 1), bins=32, range=(0, 1))
-    angles = np.mod(np.arctan2(dy, dx), np.pi)
-    orientation_hist, _ = np.histogram(angles, bins=16, range=(0, np.pi), weights=magnitude)
-    magnitude_hist = magnitude_hist.astype(float) / image.size
-    orientation_hist = orientation_hist.astype(float)
-    orientation_hist /= max(float(orientation_hist.sum()), 1e-12)
-    return np.concatenate(([np.mean(magnitude), np.std(magnitude)], magnitude_hist, orientation_hist))
+def _gradient_feature(image: np.ndarray, normalizers=None):
+    """Return multiscale edge statistics using shared reference normalization."""
+    features, used_normalizers = [], []
+    for index, sigma in enumerate((0.0, 1.0, 2.0, 4.0)):
+        working = image if sigma == 0 else gaussian_filter(image, sigma)
+        # Periodic differences retain cyclic-translation invariance.
+        dx = np.roll(working, -1, axis=1) - working
+        dy = np.roll(working, -1, axis=0) - working
+        magnitude = np.hypot(dx, dy)
+        scale = (max(float(np.percentile(magnitude, 99)), 1e-12)
+                 if normalizers is None else normalizers[index])
+        used_normalizers.append(scale)
+        magnitude_hist, _ = np.histogram(
+            np.clip(magnitude / scale, 0, 1), bins=32, range=(0, 1))
+        angles = np.mod(np.arctan2(dy, dx), np.pi)
+        orientation_hist, _ = np.histogram(
+            angles, bins=16, range=(0, np.pi), weights=magnitude)
+        orientation_hist = orientation_hist.astype(float)
+        orientation_hist /= max(float(orientation_hist.sum()), 1e-12)
+        features.extend((float(np.mean(magnitude)), float(np.std(magnitude))))
+        features.extend((magnitude_hist.astype(float) / image.size).tolist())
+        features.extend(orientation_hist.tolist())
+    return np.asarray(features), tuple(used_normalizers)
+
+
+def _local_contrast_feature(image: np.ndarray, normalizers=None):
+    """Describe local standard-deviation distributions at several scales."""
+    features, used_normalizers = [], []
+    squared = np.asarray(image, dtype=np.float64) ** 2
+    for index, sigma in enumerate((1.0, 2.0, 4.0, 8.0)):
+        mean = gaussian_filter(image, sigma)
+        variance = np.maximum(gaussian_filter(squared, sigma) - mean * mean, 0.0)
+        contrast = np.sqrt(variance)
+        scale = (max(float(np.percentile(contrast, 99)), 1e-12)
+                 if normalizers is None else normalizers[index])
+        used_normalizers.append(scale)
+        histogram, _ = np.histogram(
+            np.clip(contrast / scale, 0, 1), bins=32, range=(0, 1))
+        features.extend((float(np.mean(contrast)), float(np.std(contrast))))
+        features.extend((histogram.astype(float) / image.size).tolist())
+    return np.asarray(features), tuple(used_normalizers)
 
 
 @lru_cache(maxsize=32)
@@ -164,7 +193,12 @@ class TextureLoss:
         self._spectrum = _spectrum_features(self.reference)
         self._histogram = _histogram_feature(self.reference, self._histogram_range)
         self._autocorrelation = _autocorrelation_feature(self.reference)
-        self._gradient = _gradient_feature(self.reference)
+        self._gradient, self._gradient_normalizers = _gradient_feature(self.reference)
+        if self.weights.local_contrast > 0:
+            self._local_contrast, self._contrast_normalizers = _local_contrast_feature(
+                self.reference)
+        else:
+            self._local_contrast, self._contrast_normalizers = None, None
         self._local_structure_settings = (local_structure_scales,
                                           local_structure_orientations,
                                           local_structure_block_size)
@@ -181,7 +215,14 @@ class TextureLoss:
         histogram = float(np.mean(np.abs(
             self._histogram - _histogram_feature(image, self._histogram_range))))
         autocorrelation = float(np.mean((self._autocorrelation - _autocorrelation_feature(image)) ** 2))
-        gradient = float(np.mean(np.abs(self._gradient - _gradient_feature(image))))
+        candidate_gradient, _ = _gradient_feature(image, self._gradient_normalizers)
+        gradient = float(np.mean(np.abs(self._gradient - candidate_gradient)))
+        local_contrast = 0.0
+        if self._local_contrast is not None:
+            candidate_contrast, _ = _local_contrast_feature(
+                image, self._contrast_normalizers)
+            local_contrast = float(np.mean(np.abs(
+                self._local_contrast - candidate_contrast)))
         local_structure = 0.0
         if self._local_structure is not None:
             candidate_structure = _local_structure_feature(
@@ -192,6 +233,7 @@ class TextureLoss:
         return {"spectrum_loss": spectrum, "histogram_loss": histogram,
                 "autocorrelation_loss": autocorrelation, "gradient_loss": gradient,
                 "local_structure_loss": local_structure,
+                "local_contrast_loss": local_contrast,
                 "mse_loss": mse}
 
     def evaluate(self, candidate: np.ndarray) -> tuple[float, dict[str, float]]:
@@ -201,10 +243,13 @@ class TextureLoss:
                     + self.weights.autocorrelation * parts["autocorrelation_loss"]
                     + self.weights.gradient * parts["gradient_loss"]
                     + self.weights.mse * parts["mse_loss"]
-                    + self.weights.local_structure * parts["local_structure_loss"])
-        total = float(weighted / (self.weights.spectrum + self.weights.histogram
-                                  + self.weights.autocorrelation + self.weights.gradient
-                                  + self.weights.mse + self.weights.local_structure))
+                    + self.weights.local_structure * parts["local_structure_loss"]
+                    + self.weights.local_contrast * parts["local_contrast_loss"])
+        total_denominator = (self.weights.spectrum + self.weights.histogram
+                             + self.weights.autocorrelation + self.weights.gradient
+                             + self.weights.mse + self.weights.local_structure
+                             + self.weights.local_contrast)
+        total = float(weighted / total_denominator)
         return total, {"texture_loss": total, **parts}
 
 def calculate_texture_loss(reference, candidate, weights: TextureLossWeights | None = None,

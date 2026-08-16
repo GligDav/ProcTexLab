@@ -1,6 +1,7 @@
 import json
 import numpy as np
 import pytest
+from scipy.ndimage import gaussian_filter
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
     PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent, TextureFitter,
     WaveletComponent, normalize_image)
@@ -133,7 +134,7 @@ def test_texture_loss_is_statistical_and_reports_components():
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
                                   "autocorrelation_loss", "gradient_loss",
-                                  "local_structure_loss", "mse_loss"}
+                                  "local_structure_loss", "local_contrast_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
     assert shifted_loss < np.mean((reference - shifted) ** 2)
 
@@ -147,6 +148,18 @@ def test_mse_texture_loss_component_and_weighting():
     total, parts = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 1)).evaluate(candidate)
     assert parts["mse_loss"] == pytest.approx(.25)
     assert total == pytest.approx(.25)
+
+def test_local_contrast_loss_detects_region_scale_changes():
+    y, x = np.indices((48, 48))
+    reference = (x >= 24).astype(float)
+    blurred = gaussian_filter(reference, 3.0)
+    weights = TextureLossWeights(0, 0, 0, 0, 0, 0, 1)
+    evaluator = TextureLoss(reference, weights)
+    exact, _ = evaluator.evaluate(reference)
+    changed, parts = evaluator.evaluate(blurred)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert changed == pytest.approx(parts["local_contrast_loss"])
+    assert changed > 0
 
 
 def test_local_structure_loss_detects_phase_scrambling():

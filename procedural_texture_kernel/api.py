@@ -48,6 +48,7 @@ class FitConfig:
     gradient_weight: float = 0.5
     mse_weight: float = 1.0
     local_structure_weight: float = 0.0
+    local_contrast_weight: float = 0.0
     local_structure_scales: int = 3
     local_structure_orientations: int = 4
     local_structure_block_size: int = 8
@@ -99,7 +100,8 @@ class FitConfig:
             raise ValueError("amplitude_refit_interval must be a positive integer")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
-                           self.mse_weight, self.local_structure_weight)
+                           self.mse_weight, self.local_structure_weight,
+                           self.local_contrast_weight)
         for value, name in ((self.local_structure_scales, "local_structure_scales"),
                             (self.local_structure_orientations,
                              "local_structure_orientations"),
@@ -117,7 +119,8 @@ class FitConfig:
         """Return manual weights and the full-image diagnostic weights."""
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                                   self.autocorrelation_weight, self.gradient_weight,
-                                  self.mse_weight, self.local_structure_weight)
+                                  self.mse_weight, self.local_structure_weight,
+                                  self.local_contrast_weight)
 
 @dataclass
 class FitResult:
