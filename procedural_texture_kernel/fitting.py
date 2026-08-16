@@ -142,41 +142,88 @@ def _phase_sinusoid(atom, residual, u, v):
     atom.amplitude = float(np.hypot(a, b)); atom.phase = float(np.arctan2(-b, a))
     return atom
 
+
+def _local_structure_estimate(residual, iy: int, ix: int, gradients=None):
+    """Estimate local edge normal, tangent, and support size around a residual peak."""
+    if gradients is None:
+        gradients = np.gradient(gaussian_filter(residual, 1.0))
+    gy, gx = gradients
+    radius = max(2, min(residual.shape) // 12)
+    top, bottom = max(0, iy-radius), min(residual.shape[0], iy+radius+1)
+    left, right = max(0, ix-radius), min(residual.shape[1], ix+radius+1)
+    local_gx, local_gy = gx[top:bottom, left:right], gy[top:bottom, left:right]
+    jxx = float(np.sum(local_gx * local_gx))
+    jyy = float(np.sum(local_gy * local_gy))
+    jxy = float(np.sum(local_gx * local_gy))
+    normal = .5 * np.arctan2(2.0 * jxy, jxx - jyy) if jxx + jyy > 1e-15 else 0.0
+    tangent = normal + np.pi / 2.0
+
+    patch = np.abs(residual[top:bottom, left:right])
+    yy, xx = np.indices(patch.shape)
+    weights = patch / max(float(np.sum(patch)), 1e-12)
+    spread_pixels = np.sqrt(float(np.sum(weights * (
+        (xx - (ix-left)) ** 2 + (yy - (iy-top)) ** 2))) / 2.0)
+    scale = float(np.clip(spread_pixels / max(residual.shape), .025, .25))
+    return normal, tangent, scale
+
+
+def _adaptive_noise_frequencies(residual, config):
+    """Combine residual spectral peaks with stable octave anchors."""
+    probes = _fft_sinusoid_candidates(residual, config, 4)
+    proposed = [float(np.hypot(atom.frequency_u, atom.frequency_v)) for atom in probes]
+    proposed.extend((2.0, 4.0, 8.0, 16.0))
+    frequencies = []
+    for value in proposed:
+        value = float(np.clip(value, config.min_frequency, config.max_frequency))
+        if config.min_frequency <= value <= config.max_frequency and all(
+                abs(value-existing) > .25 for existing in frequencies):
+            frequencies.append(value)
+        if len(frequencies) == 3:
+            break
+    return tuple(frequencies)
+
 def _local_candidates(residual, config, dominant_frequency: float):
     h, w = residual.shape; u, v = coordinate_grid(w, h)
+    gradients = np.gradient(gaussian_filter(residual, 1.0))
     flat_order = np.argsort(np.abs(residual).ravel())[::-1]
     centers = []
     for flat in flat_order:
         iy, ix = np.unravel_index(flat, residual.shape)
-        center = (float(u[iy, ix]), float(v[iy, ix]))
-        if all((center[0]-a)**2 + (center[1]-b)**2 > .01 for a, b in centers):
+        center = (float(u[iy, ix]), float(v[iy, ix]), iy, ix)
+        if all((center[0]-a)**2 + (center[1]-b)**2 > .01
+               for a, b, _, _ in centers):
             centers.append(center)
         if len(centers) == 4: break
     out = []
-    for cu, cv in centers:
+    for cu, cv, iy, ix in centers:
+        normal, tangent, scale = _local_structure_estimate(
+            residual, iy, ix, gradients)
+        scales = tuple(float(np.clip(scale * factor, .02, .4))
+                       for factor in (.65, 1.0, 1.6))
         if "gaussian_rbf" in config.component_families:
             out.extend(GaussianRBFComponent(center_u=cu, center_v=cv, sigma=s)
-                       for s in (.06, .12, .22))
+                       for s in scales)
         if "gabor" in config.component_families and dominant_frequency >= 1:
             out.extend(GaborComponent(center_u=cu, center_v=cv, sigma_u=.16, sigma_v=.10,
                                       frequency=dominant_frequency, orientation=o)
-                       for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+                       for o in (normal, tangent))
         if "wavelet" in config.component_families:
             out.extend(WaveletComponent(center_u=cu, center_v=cv, scale_u=s, scale_v=s)
-                       for s in (.05, .10, .20))
+                       for s in scales)
         if "anisotropic_gaussian" in config.component_families:
             out.extend(AnisotropicGaussianComponent(center_u=cu, center_v=cv,
-                       sigma_u=s, sigma_v=s/2, orientation=o)
-                       for s in (.08, .16) for o in (0, np.pi/2))
+                       sigma_u=s*1.6, sigma_v=s*.65, orientation=o)
+                       for s in scales[:2] for o in (normal, tangent))
         if "line" in config.component_families:
-            out.extend(LineComponent(center_u=cu, center_v=cv, orientation=o)
-                       for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+            out.extend(LineComponent(center_u=cu, center_v=cv, width=max(.01, scale),
+                                     orientation=o) for o in (tangent, tangent + np.pi/4))
         if "step_edge" in config.component_families:
-            out.extend(StepEdgeComponent(center_u=cu, center_v=cv, orientation=o)
-                       for o in (0, np.pi/4, np.pi/2, 3*np.pi/4))
+            out.extend(StepEdgeComponent(center_u=cu, center_v=cv, orientation=o,
+                                         softness=max(.005, scale/2))
+                       for o in (normal, normal + np.pi/4))
         if "dog_log" in config.component_families:
             out.extend(DifferenceOfGaussiansComponent(center_u=cu, center_v=cv,
-                       sigma=s, mode=mode) for s in (.06, .12) for mode in ("dog", "log"))
+                       sigma=s, mode=mode) for s in scales[:2] for mode in ("dog", "log"))
         if "radial_wave" in config.component_families:
             out.append(RadialWaveComponent(center_u=cu, center_v=cv,
                                            frequency=max(1., dominant_frequency)))
@@ -194,38 +241,37 @@ def _local_candidates(residual, config, dominant_frequency: float):
         out.append(SparseImpulseComponent(seed=config.seed))
     return out
 
-def _perlin_candidates(config, u, v):
-    frequencies = (2.0, 4.0, 8.0, 16.0)
+def _perlin_candidates(residual, config, u, v):
+    frequencies = _adaptive_noise_frequencies(residual, config)
+    seeds = tuple(config.seed + index for index in range(config.noise_seed_candidates))
     families = {"perlin_noise": PerlinNoiseComponent,
                 "fbm": FractalBrownianMotionComponent,
                 "turbulence_noise": TurbulenceNoiseComponent,
                 "domain_warped_noise": DomainWarpedNoiseComponent,
                 "voronoi_noise": VoronoiNoiseComponent}
-    candidates = [cls(frequency=f, seed=config.seed + index)
+    candidates = [cls(frequency=f, seed=seed)
             for family, cls in families.items() if family in config.component_families
-            for index, f in enumerate(frequencies)
-            if config.min_frequency <= f <= config.max_frequency]
+            for f in frequencies for seed in seeds]
     if "ridged_multifractal" in config.component_families:
         candidates.extend(
             RidgedMultifractalComponent(
                 frequency=frequency, ridge_power=power,
-                rotation=rotation, seed=config.seed + index)
-            for index, frequency in enumerate(frequencies)
-            if config.min_frequency <= frequency <= config.max_frequency
+                rotation=rotation, seed=seed)
+            for frequency in frequencies for seed in seeds
             for power in (1.5, 3.0)
             for rotation in (0.0, np.pi / 4.0)
         )
     if "thresholded_noise" in config.component_families:
-        for index, frequency in enumerate(frequencies):
-            if not config.min_frequency <= frequency <= config.max_frequency:
-                continue
-            prototype = ThresholdedNoiseComponent(
-                frequency=frequency, seed=config.seed + index)
-            noise = _perlin_basis_for_threshold(prototype, u, v)
-            for threshold in np.quantile(noise, (.3, .5, .7)):
-                for edge_width in (.04, .12):
-                    candidates.append(replace(
-                        prototype, threshold=float(threshold), edge_width=edge_width))
+        positive_coverage = float(np.mean(residual > 0))
+        coverages = tuple(np.unique(np.clip((positive_coverage, .35, .65), .05, .95)))
+        for frequency in frequencies:
+            for seed in seeds:
+                prototype = ThresholdedNoiseComponent(frequency=frequency, seed=seed)
+                noise = _perlin_basis_for_threshold(prototype, u, v)
+                for threshold in np.quantile(noise, tuple(1.0-c for c in coverages)):
+                    for edge_width in (.04, .12):
+                        candidates.append(replace(
+                            prototype, threshold=float(threshold), edge_width=edge_width))
     return candidates
 
 
@@ -378,7 +424,7 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         if "sinusoid" in active_families:
             candidates.extend(_fft_sinusoid_candidates(
                 residual, candidate_config, config.fft_candidates))
-        candidates.extend(_perlin_candidates(candidate_config, u, v))
+        candidates.extend(_perlin_candidates(residual, candidate_config, u, v))
         dominant = 0.0
         sinusoid_candidates = [x for x in candidates if isinstance(x, SinusoidComponent)]
         if sinusoid_candidates:
@@ -577,6 +623,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
     return model, {"fit_shape": [h, w], "components": len(model.components),
                    "iterations": history, "elapsed_seconds": time.perf_counter() - started,
                    "seed": config.seed,
+                   "noise_seed_candidates": config.noise_seed_candidates,
                    "decomposition": {"method": config.decomposition_method,
                                      "bands": config.decomposition_bands,
                                      "base_sigma": config.decomposition_base_sigma,

@@ -33,11 +33,13 @@ class TestApplication(tk.Tk):
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
         self.components = tk.IntVar(value=8); self.iterations = tk.IntVar(value=40)
         self.resolution = tk.IntVar(value=96); self.seed = tk.IntVar(value=0)
+        self.noise_seed_candidates = tk.IntVar(value=2)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
                                 ("Fit resolution", self.resolution),
                                 ("Bands", self.decomposition_bands), ("Seed", self.seed),
+                                ("Noise seeds", self.noise_seed_candidates),
                                 ("Min improvement", self.min_improvement)):
             ttk.Label(controls, text=label).pack(side="left", padx=(8,2))
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
@@ -198,6 +200,7 @@ class TestApplication(tk.Tk):
         if not families:
             raise ValueError("select at least one procedural atom family")
         return FitConfig(seed=self.seed.get(), max_components=self.components.get(),
+                         noise_seed_candidates=self.noise_seed_candidates.get(),
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
                          component_families=families,

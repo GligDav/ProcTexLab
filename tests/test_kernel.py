@@ -13,7 +13,9 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     VoronoiNoiseComponent, SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
-from procedural_texture_kernel.fitting import _refine_new_atom
+from procedural_texture_kernel.fitting import (
+    _adaptive_noise_frequencies, _local_structure_estimate,
+    _perlin_candidates, _refine_new_atom)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
@@ -278,6 +280,37 @@ def test_amplitude_refit_interval_validation(value):
 def test_band_aware_candidates_validation():
     with pytest.raises(ValueError, match="band_aware_candidates"):
         FitConfig(band_aware_candidates=1)
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_noise_seed_candidate_validation(value):
+    with pytest.raises(ValueError, match="noise_seed_candidates"):
+        FitConfig(noise_seed_candidates=value)
+
+def test_adaptive_noise_frequencies_include_residual_peak():
+    y, x = np.indices((40, 48))
+    residual = np.sin(2 * np.pi * (7 * x / 48 + 2 * y / 40))
+    frequencies = _adaptive_noise_frequencies(residual, FitConfig())
+    assert len(frequencies) <= 3
+    assert any(abs(frequency - np.hypot(7, 2)) < .5 for frequency in frequencies)
+
+def test_local_structure_estimate_detects_vertical_edge_normal():
+    residual = np.zeros((48, 48))
+    residual[:, 24:] = 1
+    normal, tangent, scale = _local_structure_estimate(residual, 24, 24)
+    assert abs(np.sin(normal)) < .2
+    assert abs(np.cos(tangent)) < .2
+    assert .025 <= scale <= .25
+
+def test_noise_candidate_seed_bank_is_deterministic_and_bounded():
+    residual = np.random.default_rng(3).normal(size=(20, 24))
+    u, v = coordinate_grid(24, 20)
+    config = FitConfig(component_families=("perlin_noise",),
+                       noise_seed_candidates=2)
+    first = _perlin_candidates(residual, config, u, v)
+    second = _perlin_candidates(residual, config, u, v)
+    assert 1 <= len(first) <= 6
+    assert {atom.seed for atom in first} == {0, 1}
+    assert [atom.to_dict() for atom in first] == [atom.to_dict() for atom in second]
 
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS

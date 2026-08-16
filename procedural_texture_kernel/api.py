@@ -36,6 +36,7 @@ class FitConfig:
     fitting_resolution: int | None = 96
     component_families: tuple[str, ...] = SUPPORTED_COMPONENT_FAMILIES
     fft_candidates: int = 24
+    noise_seed_candidates: int = 2
     min_frequency: float = 0.5
     max_frequency: float = 24.0
     min_improvement: float = 1e-6
@@ -70,6 +71,10 @@ class FitConfig:
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
             raise ValueError("component/iteration/candidate counts are invalid")
+        if (isinstance(self.noise_seed_candidates, bool)
+                or not isinstance(self.noise_seed_candidates, int)
+                or self.noise_seed_candidates < 1):
+            raise ValueError("noise_seed_candidates must be a positive integer")
         if self.fitting_resolution is not None and self.fitting_resolution < 8:
             raise ValueError("fitting_resolution must be at least 8 or None")
         if self.min_frequency < 0 or self.max_frequency <= self.min_frequency:

@@ -68,6 +68,8 @@ Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `
 
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
+Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 2); at most three noise frequencies are retained per iteration.
+
 Nonlinear refinement covers the principal smooth and structural families, including thresholded/ridged/domain-warped noise, fBm/turbulence, Voronoi, anisotropic Gaussians, lines, step edges, and DoG/LoG atoms. The fitter retains the original projected candidate whenever the bounded optimizer fails to improve its objective.
 
 Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
