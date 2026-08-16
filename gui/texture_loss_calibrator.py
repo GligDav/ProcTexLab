@@ -20,6 +20,7 @@ WEIGHTS = (
     ("Autocorrelation", "autocorrelation", "autocorrelation_loss", 0.75),
     ("Gradient", "gradient", "gradient_loss", 0.5),
     ("MSE", "mse", "mse_loss", 1.0),
+    ("Local structure", "local_structure", "local_structure_loss", 0.0),
 )
 
 

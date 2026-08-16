@@ -59,7 +59,8 @@ def test_manual_band_weights_remain_available():
     result = TextureFitter(config).fit(np.arange(64, dtype=float).reshape(8, 8))
     assert result.metadata["objective"]["weight_mode"] == "manual"
     assert all(band["weights"] == {"spectrum": 2, "histogram": 3,
-                                   "autocorrelation": 4, "gradient": 5, "mse": 6}
+                                   "autocorrelation": 4, "gradient": 5, "mse": 6,
+                                   "local_structure": 0}
                for band in result.metadata["bands"])
     assert all("features" not in band for band in result.metadata["bands"])
 

@@ -117,7 +117,8 @@ def test_texture_loss_is_statistical_and_reports_components():
     unrelated_loss, _ = evaluator.evaluate(rng.random(reference.shape))
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
-                                  "autocorrelation_loss", "gradient_loss", "mse_loss"}
+                                  "autocorrelation_loss", "gradient_loss",
+                                  "local_structure_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
     assert shifted_loss < np.mean((reference - shifted) ** 2)
 
@@ -131,6 +132,39 @@ def test_mse_texture_loss_component_and_weighting():
     total, parts = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 1)).evaluate(candidate)
     assert parts["mse_loss"] == pytest.approx(.25)
     assert total == pytest.approx(.25)
+
+
+def test_local_structure_loss_detects_phase_scrambling():
+    y, x = np.indices((32, 32))
+    reference = np.sign(np.sin(2 * np.pi * x / 8) + np.sin(2 * np.pi * y / 16))
+    transformed = np.fft.fft2(reference)
+    rng = np.random.default_rng(9)
+    scrambled = np.fft.ifft2(np.abs(transformed) * np.exp(
+        1j * rng.uniform(-np.pi, np.pi, transformed.shape))).real
+    evaluator = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 0, 1),
+                            local_structure_scales=2,
+                            local_structure_orientations=4,
+                            local_structure_block_size=8)
+    exact, _ = evaluator.evaluate(reference)
+    changed, parts = evaluator.evaluate(scrambled)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert changed == pytest.approx(parts["local_structure_loss"])
+    assert changed > 0
+
+
+@pytest.mark.parametrize("setting", [
+    {"local_structure_scales": 0},
+    {"local_structure_orientations": 0},
+    {"local_structure_block_size": 0},
+])
+def test_local_structure_configuration_validation(setting):
+    with pytest.raises(ValueError, match="local structure"):
+        TextureLoss(np.zeros((8, 8)), **setting)
+
+
+def test_local_structure_candidate_limit_validation():
+    with pytest.raises(ValueError, match="local_structure_candidate_limit"):
+        FitConfig(local_structure_candidate_limit=0)
 
 def test_normalization():
     assert normalize_image(np.array([[0,255]],dtype=np.uint8)).tolist() == [[0,1]]

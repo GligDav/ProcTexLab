@@ -233,8 +233,11 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         estimated = analysis.weights
         weights = TextureLossWeights(estimated.spectrum, estimated.histogram,
                                      estimated.autocorrelation, estimated.gradient,
-                                     config.mse_weight)
-    loss = TextureLoss(target, weights)
+                                     config.mse_weight, config.local_structure_weight)
+    loss = TextureLoss(target, weights,
+                       config.local_structure_scales,
+                       config.local_structure_orientations,
+                       config.local_structure_block_size)
     history = []
     for iteration in range(config.max_components):
         if cancel_callback is not None and cancel_callback():
@@ -263,14 +266,21 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                           frequency_probes[0].frequency_v))
         candidates.extend(_local_candidates(residual, config, dominant))
         if not candidates: break
-        scored = []
+        initialized = []
         for atom in candidates:
             if isinstance(atom, SinusoidComponent):
                 score = float(np.mean((atom.amplitude * atom.basis(u, v))**2))
             else:
                 atom.amplitude, score = _project(atom, residual, u, v)
-            # Pixel correlation only initializes/shortlists atoms. Selection is
-            # based on the phase/translation-tolerant texture objective.
+            initialized.append((score, atom))
+        if weights.local_structure > 0:
+            initialized = sorted(initialized, key=lambda item: item[0], reverse=True)[
+                :config.local_structure_candidate_limit]
+        scored = []
+        for score, atom in initialized:
+            # Pixel correlation initializes and, for the expensive local
+            # structure objective, shortlists atoms. Final selection still uses
+            # the complete texture objective.
             candidate_loss, _ = loss.evaluate(current + atom.evaluate(u, v))
             scored.append((before - candidate_loss, score, atom))
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
@@ -310,7 +320,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                "histogram": weights.histogram,
                                "autocorrelation": weights.autocorrelation,
                                "gradient": weights.gradient,
-                               "mse": weights.mse}}
+                               "mse": weights.mse,
+                               "local_structure": weights.local_structure}}
     if analysis is not None:
         result["features"] = analysis.features.to_dict()
     return model, result
@@ -446,5 +457,12 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                  "weight_mode": ("adaptive_per_band" if
                                     config.adaptive_texture_weights else "manual"),
                                  "mse_weight": config.mse_weight,
+                                 "local_structure": {
+                                     "weight": config.local_structure_weight,
+                                     "scales": config.local_structure_scales,
+                                     "orientations": config.local_structure_orientations,
+                                     "block_size": config.local_structure_block_size,
+                                     "candidate_limit": config.local_structure_candidate_limit,
+                                 },
                                  "band_weights": [result["weights"]
                                                   for result in band_results]}}

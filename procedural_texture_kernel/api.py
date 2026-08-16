@@ -47,6 +47,11 @@ class FitConfig:
     autocorrelation_weight: float = 0.75
     gradient_weight: float = 0.5
     mse_weight: float = 1.0
+    local_structure_weight: float = 0.0
+    local_structure_scales: int = 3
+    local_structure_orientations: int = 4
+    local_structure_block_size: int = 8
+    local_structure_candidate_limit: int = 16
     decomposition_method: str = "laplacian"
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
@@ -94,7 +99,16 @@ class FitConfig:
             raise ValueError("amplitude_refit_interval must be a positive integer")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
-                           self.mse_weight)
+                           self.mse_weight, self.local_structure_weight)
+        for value, name in ((self.local_structure_scales, "local_structure_scales"),
+                            (self.local_structure_orientations,
+                             "local_structure_orientations"),
+                            (self.local_structure_block_size,
+                             "local_structure_block_size"),
+                            (self.local_structure_candidate_limit,
+                             "local_structure_candidate_limit")):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
         create_decomposition(self.decomposition_method, self.decomposition_bands,
                              self.decomposition_base_sigma)
 
@@ -103,7 +117,7 @@ class FitConfig:
         """Return manual weights and the full-image diagnostic weights."""
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                                   self.autocorrelation_weight, self.gradient_weight,
-                                  self.mse_weight)
+                                  self.mse_weight, self.local_structure_weight)
 
 @dataclass
 class FitResult:
@@ -137,7 +151,11 @@ class TextureFitter:
         model, metadata = fit_texture(target, self.config, progress_callback, cancel_callback)
         reconstruction = model.evaluate(target.shape[1], target.shape[0])
         metrics = calculate_metrics(target, reconstruction)
-        metrics.update(calculate_texture_loss(target, reconstruction, self.config.texture_loss_weights))
+        metrics.update(calculate_texture_loss(
+            target, reconstruction, self.config.texture_loss_weights,
+            local_structure_scales=self.config.local_structure_scales,
+            local_structure_orientations=self.config.local_structure_orientations,
+            local_structure_block_size=self.config.local_structure_block_size))
         metadata["spectral_diagnostics"] = compare_spectra(target, reconstruction)
         return FitResult(model, metrics, reconstruction,
                          target - reconstruction, metadata)
