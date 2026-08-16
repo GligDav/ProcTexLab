@@ -247,6 +247,10 @@ def test_amplitude_refit_interval_validation(value):
     with pytest.raises(ValueError, match="amplitude_refit_interval"):
         FitConfig(amplitude_refit_interval=value)
 
+def test_band_aware_candidates_validation():
+    with pytest.raises(ValueError, match="band_aware_candidates"):
+        FitConfig(band_aware_candidates=1)
+
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS
     from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES

@@ -23,6 +23,31 @@ from .spectral_diagnostics import compare_spectra
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
 
+_DETAIL_FAMILIES = frozenset({
+    "sinusoid", "gabor", "wavelet", "dog_log", "sparse_impulse", "line",
+    "perlin_noise", "turbulence_noise",
+})
+_STRUCTURE_FAMILIES = frozenset({
+    "thresholded_noise", "domain_warped_noise", "ridged_multifractal",
+    "voronoi_noise", "fbm", "anisotropic_gaussian", "gaussian_rbf",
+    "step_edge", "polynomial_trend", "binary_primitive", "simple_constant",
+    "radial_wave", "spiral_wave", "line",
+})
+
+
+def _families_for_band(config: "FitConfig", band_index: int,
+                       band_count: int) -> tuple[str, ...]:
+    """Select role-appropriate families; never suppress the sole available role."""
+    selected = tuple(config.component_families)
+    if not config.band_aware_candidates or band_count <= 1:
+        return selected
+    position = band_index / max(band_count - 1, 1)  # high frequency -> low residual
+    preferred = (_DETAIL_FAMILIES if position < 1 / 3 else
+                 _STRUCTURE_FAMILIES if position > 2 / 3 else
+                 _DETAIL_FAMILIES | _STRUCTURE_FAMILIES)
+    active = tuple(family for family in selected if family in preferred)
+    return active or selected
+
 def _notify(callback, stage: str, progress: float, message: str) -> None:
     if callback is not None:
         callback(stage, float(np.clip(progress, 0, 1)), message)
@@ -275,6 +300,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
               cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
     """Fit one target band without decomposing procedural candidates."""
     h, w = target.shape; u, v = coordinate_grid(w, h)
+    active_families = _families_for_band(config, band_index, band_count)
+    candidate_config = replace(config, component_families=active_families)
     model = _initial_plane(target, u, v, config.fit_plane, config.ridge)
     analysis = WeightEstimator().analyze(target) if config.adaptive_texture_weights else None
     if analysis is None:
@@ -297,9 +324,10 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         residual = target - current
         before, _ = loss.evaluate(current)
         candidates = []
-        if "sinusoid" in config.component_families:
-            candidates.extend(_fft_sinusoid_candidates(residual, config, config.fft_candidates))
-        candidates.extend(_perlin_candidates(config, u, v))
+        if "sinusoid" in active_families:
+            candidates.extend(_fft_sinusoid_candidates(
+                residual, candidate_config, config.fft_candidates))
+        candidates.extend(_perlin_candidates(candidate_config, u, v))
         dominant = 0.0
         sinusoid_candidates = [x for x in candidates if isinstance(x, SinusoidComponent)]
         if sinusoid_candidates:
@@ -307,15 +335,15 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                       sinusoid_candidates[0].frequency_v))
             for atom in sinusoid_candidates:
                 _phase_sinusoid(atom, residual, u, v)
-        elif any(family in config.component_families
+        elif any(family in active_families
                  for family in ("gabor", "radial_wave", "spiral_wave")):
             # Oriented/local carriers still need a residual-derived frequency
             # estimate when global sinusoid atoms themselves are disabled.
-            frequency_probes = _fft_sinusoid_candidates(residual, config, 1)
+            frequency_probes = _fft_sinusoid_candidates(residual, candidate_config, 1)
             if frequency_probes:
                 dominant = float(np.hypot(frequency_probes[0].frequency_u,
                                           frequency_probes[0].frequency_v))
-        candidates.extend(_local_candidates(residual, config, dominant))
+        candidates.extend(_local_candidates(residual, candidate_config, dominant))
         if not candidates: break
         initialized = []
         for atom in candidates:
@@ -364,6 +392,7 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             model, target, loss, u, v, config.ridge, config.fit_plane)
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
     result = {"band": band_index + 1, "components": len(model.components),
+                   "candidate_families": list(active_families),
                    "iterations": history, "final_loss": final_loss,
                    "final_amplitude_refit": final_refit,
                    "loss_components": final_parts,
@@ -508,6 +537,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                  "band_losses": band_losses,
                                  "weight_mode": ("adaptive_per_band" if
                                     config.adaptive_texture_weights else "manual"),
+                                 "band_aware_candidates": config.band_aware_candidates,
                                  "mse_weight": config.mse_weight,
                                  "local_contrast_weight": config.local_contrast_weight,
                                  "local_structure": {

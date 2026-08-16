@@ -4,6 +4,7 @@ import pytest
 from procedural_texture_kernel import (FitConfig, LaplacianPyramid, SinusoidComponent,
                                        TextureFitter, create_decomposition)
 from procedural_texture_kernel.model import ProceduralTextureModel
+from procedural_texture_kernel.fitting import _families_for_band
 
 
 @pytest.mark.parametrize("shape,bands", [((31, 47), 1), ((32, 32), 5), ((9, 15), 7)])
@@ -18,6 +19,25 @@ def test_laplacian_pyramid_reconstructs_input(shape, bands):
 
 def test_laplacian_scales_are_octave_spaced():
     assert LaplacianPyramid(bands=5, base_sigma=.75).sigmas == (.75, 1.5, 3.0, 6.0)
+
+
+def test_band_aware_candidate_roles_follow_pyramid_order():
+    config = FitConfig()
+    high = _families_for_band(config, 0, 5)
+    middle = _families_for_band(config, 2, 5)
+    low = _families_for_band(config, 4, 5)
+    assert "wavelet" in high and "thresholded_noise" not in high
+    assert "wavelet" in middle and "thresholded_noise" in middle
+    assert "thresholded_noise" in low and "wavelet" not in low
+
+
+def test_band_roles_preserve_single_explicit_family_and_can_be_disabled():
+    selected = ("sinusoid",)
+    config = FitConfig(component_families=selected)
+    assert _families_for_band(config, 4, 5) == selected
+    disabled = FitConfig(component_families=("sinusoid", "thresholded_noise"),
+                         band_aware_candidates=False)
+    assert _families_for_band(disabled, 0, 5) == disabled.component_families
 
 
 def test_fitter_optimizes_each_target_band_independently():

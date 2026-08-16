@@ -90,12 +90,15 @@ class TestApplication(tk.Tk):
         refit_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.joint_amplitude_refit = tk.BooleanVar(value=True)
         self.amplitude_refit_interval = tk.IntVar(value=2)
+        self.band_aware_candidates = tk.BooleanVar(value=True)
         ttk.Checkbutton(refit_controls, text="Jointly refit amplitudes",
                         variable=self.joint_amplitude_refit).pack(side="left", padx=8)
         ttk.Label(refit_controls, text="Every N accepted atoms").pack(
             side="left", padx=(12, 2))
         ttk.Entry(refit_controls, textvariable=self.amplitude_refit_interval,
                   width=7).pack(side="left")
+        ttk.Checkbutton(refit_controls, text="Band-aware atom roles",
+                        variable=self.band_aware_candidates).pack(side="left", padx=12)
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.atom_enabled = {
@@ -212,7 +215,8 @@ class TestApplication(tk.Tk):
                          detail_min_frequency=self.detail_min_frequency.get(),
                          detail_hf_ratio_threshold=self.detail_hf_threshold.get(),
                          joint_amplitude_refit=self.joint_amplitude_refit.get(),
-                         amplitude_refit_interval=self.amplitude_refit_interval.get())
+                         amplitude_refit_interval=self.amplitude_refit_interval.get(),
+                         band_aware_candidates=self.band_aware_candidates.get())
 
     def _poll(self):
         try:

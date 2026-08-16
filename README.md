@@ -66,6 +66,8 @@ manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
+With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
+
 Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
 the normal multiband fit. It activates only when the fitting-resolution
 `high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters
