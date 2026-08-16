@@ -8,7 +8,7 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
     FractalBrownianMotionComponent, LineComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
-    SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
+    SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
@@ -67,7 +67,7 @@ def test_new_component_serialization(component):
     DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
-    BinaryPrimitiveComponent(), SimpleConstantComponent(),
+    BinaryPrimitiveComponent(), SimpleConstantComponent(), ThresholdedNoiseComponent(seed=3),
 ])
 def test_extended_components_are_finite_deterministic_and_serializable(component):
     u, v = coordinate_grid(23, 17)
@@ -90,9 +90,24 @@ def test_component_variants_and_seed_changes():
         values = BinaryPrimitiveComponent(shape=shape).basis(u, v)
         assert set(np.unique(values)) <= {0.0, 1.0}
 
+def test_thresholded_noise_has_bounded_sharp_regions_and_serializes():
+    u, v = coordinate_grid(48, 40)
+    soft = ThresholdedNoiseComponent(seed=5, frequency=3, edge_width=.2)
+    sharp = ThresholdedNoiseComponent(seed=5, frequency=3, edge_width=.01)
+    soft_values, sharp_values = soft.basis(u, v), sharp.basis(u, v)
+    assert np.min(sharp_values) >= -1 and np.max(sharp_values) <= 1
+    assert np.count_nonzero(np.abs(sharp_values) > .99) > np.count_nonzero(
+        np.abs(soft_values) > .99)
+    restored = ProceduralTextureModel.from_dict(json.loads(json.dumps(
+        ProceduralTextureModel(components=[sharp]).to_dict())))
+    assert isinstance(restored.components[0], ThresholdedNoiseComponent)
+    assert np.allclose(sharp.evaluate(u, v), restored.evaluate_grid(u, v))
+
 @pytest.mark.parametrize("family, component", [
     ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
     ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
+    ("thresholded_noise", ThresholdedNoiseComponent(
+        .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
 ])
 def test_new_component_families_can_be_fitted(family, component):
     image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)

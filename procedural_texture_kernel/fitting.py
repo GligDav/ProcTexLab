@@ -11,7 +11,7 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     FractalBrownianMotionComponent, GaborComponent, GaussianRBFComponent, LineComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
-    SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
+    SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, WaveletComponent, SimpleConstantComponent)
 from .coordinates import coordinate_grid
 from .decomposition import create_decomposition
@@ -169,7 +169,7 @@ def _local_candidates(residual, config, dominant_frequency: float):
         out.append(SparseImpulseComponent(seed=config.seed))
     return out
 
-def _perlin_candidates(config):
+def _perlin_candidates(config, u, v):
     frequencies = (2.0, 4.0, 8.0, 16.0)
     families = {"perlin_noise": PerlinNoiseComponent,
                 "fbm": FractalBrownianMotionComponent,
@@ -177,10 +177,35 @@ def _perlin_candidates(config):
                 "turbulence_noise": TurbulenceNoiseComponent,
                 "domain_warped_noise": DomainWarpedNoiseComponent,
                 "voronoi_noise": VoronoiNoiseComponent}
-    return [cls(frequency=f, seed=config.seed + index)
+    candidates = [cls(frequency=f, seed=config.seed + index)
             for family, cls in families.items() if family in config.component_families
             for index, f in enumerate(frequencies)
             if config.min_frequency <= f <= config.max_frequency]
+    if "thresholded_noise" in config.component_families:
+        for index, frequency in enumerate(frequencies):
+            if not config.min_frequency <= frequency <= config.max_frequency:
+                continue
+            prototype = ThresholdedNoiseComponent(
+                frequency=frequency, seed=config.seed + index)
+            noise = _perlin_basis_for_threshold(prototype, u, v)
+            for threshold in np.quantile(noise, (.3, .5, .7)):
+                for edge_width in (.04, .12):
+                    candidates.append(replace(
+                        prototype, threshold=float(threshold), edge_width=edge_width))
+    return candidates
+
+
+def _perlin_basis_for_threshold(atom: ThresholdedNoiseComponent, u, v):
+    """Evaluate the unremapped source field used to initialize thresholds."""
+    du, dv = u - .5, v - .5
+    c, s = np.cos(atom.rotation), np.sin(atom.rotation)
+    ru = c * du + s * dv + .5
+    rv = -s * du + c * dv + .5
+    return PerlinNoiseComponent(
+        frequency=atom.frequency, octaves=atom.octaves,
+        persistence=atom.persistence, lacunarity=atom.lacunarity,
+        offset_u=atom.offset_u, offset_v=atom.offset_v,
+        seed=atom.seed).basis(ru, rv)
 
 def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     """Refine one atom against the translation-tolerant composite texture loss."""
@@ -200,6 +225,14 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5), (.015, .5),
                   (-np.pi, np.pi)]
         def make(p): return WaveletComponent(p[0], p[1], p[2], p[3], p[4], p[5])
+    elif isinstance(atom, ThresholdedNoiseComponent):
+        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+              atom.rotation, atom.threshold, atom.edge_width]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1),
+                  (-np.pi, np.pi), (-1, 1), (.005, .5)]
+        def make(p): return replace(
+            atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
+            offset_v=p[3], rotation=p[4], threshold=p[5], edge_width=p[6])
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
@@ -248,7 +281,7 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         candidates = []
         if "sinusoid" in config.component_families:
             candidates.extend(_fft_sinusoid_candidates(residual, config, config.fft_candidates))
-        candidates.extend(_perlin_candidates(config))
+        candidates.extend(_perlin_candidates(config, u, v))
         dominant = 0.0
         sinusoid_candidates = [x for x in candidates if isinstance(x, SinusoidComponent)]
         if sinusoid_candidates:

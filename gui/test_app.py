@@ -12,7 +12,7 @@ from .spectral_diagnostics_viewer import SpectralDiagnosticsDialog
 
 ATOM_LABELS = {
     "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
-    "perlin_noise": "Perlin noise", "wavelet": "Wavelet",
+    "perlin_noise": "Perlin noise", "thresholded_noise": "Thresholded noise", "wavelet": "Wavelet",
     "voronoi_noise": "Voronoi noise", "fbm": "Fractal Brownian motion (fBm)",
     "ridged_multifractal": "Ridged multifractal", "turbulence_noise": "Turbulence noise",
     "domain_warped_noise": "Domain-warped noise",

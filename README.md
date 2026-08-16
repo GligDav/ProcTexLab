@@ -94,12 +94,13 @@ The component types are:
 - `GaborComponent`: amplitude, center, two Gaussian widths, carrier frequency, orientation, phase.
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
+- `ThresholdedNoiseComponent`: a rotated fBm field remapped through a smooth threshold, with controllable threshold and edge width for coherent high-contrast regions.
 - `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
 - Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`.
 - Geometric/local atoms: `AnisotropicGaussianComponent`, `LineComponent`, `StepEdgeComponent`, `DifferenceOfGaussiansComponent` (`dog` or `log` mode), and `BinaryPrimitiveComponent` (disk, box, ring, or checker).
 - Structured/global atoms: `PolynomialTrendComponent`, `RadialWaveComponent`, `SpiralWaveComponent`, and `SparseImpulseComponent`.
 
-All five names can be selected through `FitConfig.component_families`: `sinusoid`, `gabor`, `gaussian_rbf`, `perlin_noise`, and `wavelet`. They are enabled by default. Components can also be constructed and added directly:
+All registered names can be selected through `FitConfig.component_families`; they are enabled by default. Components can also be constructed and added directly. The fitter initializes `thresholded_noise` candidates from source-noise quantiles at several frequencies and edge widths, then refines amplitude, frequency, offset, rotation, threshold, and edge width against the configured objective.
 
 ```python
 from procedural_texture_kernel import PerlinNoiseComponent, WaveletComponent

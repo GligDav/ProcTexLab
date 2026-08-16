@@ -128,6 +128,36 @@ def _perlin_basis(u, v, frequency, octaves, persistence, lacunarity,
                                 offset_u, offset_v, seed).basis(u, v)
 
 @dataclass
+class ThresholdedNoiseComponent(ProceduralComponent):
+    """Smoothly thresholded, rotated fBm field for coherent binary regions."""
+    frequency: float = 2.0
+    octaves: int = 4
+    persistence: float = 0.5
+    lacunarity: float = 2.0
+    offset_u: float = 0.0
+    offset_v: float = 0.0
+    rotation: float = 0.0
+    threshold: float = 0.0
+    edge_width: float = 0.08
+    seed: int = 0
+    type_name: ClassVar[str] = "thresholded_noise"
+
+    def basis(self, u, v):
+        # Rotate around the source-domain center while retaining procedural
+        # continuation outside [0, 1).  Offsets remain in rotated UV space.
+        du, dv = u - .5, v - .5
+        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        ru = c * du + s * dv + .5
+        rv = -s * du + c * dv + .5
+        noise = _perlin_basis(ru, rv, self.frequency, self.octaves,
+                              self.persistence, self.lacunarity,
+                              self.offset_u, self.offset_v, self.seed)
+        width = max(float(self.edge_width), 1e-12)
+        t = np.clip((noise - (self.threshold - width)) / (2.0 * width), 0.0, 1.0)
+        smooth = t * t * (3.0 - 2.0 * t)
+        return 2.0 * smooth - 1.0
+
+@dataclass
 class VoronoiNoiseComponent(ProceduralComponent):
     """Seeded cellular (Worley/Voronoi) nearest-feature noise."""
     frequency: float = 5.0
@@ -345,7 +375,7 @@ class SimpleConstantComponent(ProceduralComponent):
 
 COMPONENT_TYPES = {c.type_name: c for c in (
     SinusoidComponent, GaborComponent, GaussianRBFComponent,
-    PerlinNoiseComponent, WaveletComponent,
+    PerlinNoiseComponent, ThresholdedNoiseComponent, WaveletComponent,
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,

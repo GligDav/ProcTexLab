@@ -12,7 +12,7 @@ from .weight_estimator import (BandFeatureExtractor, BandFeatures, LossWeights,
                                WeightEstimatorResult, WeightMappingConfig)
 __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "ProceduralComponent", "SinusoidComponent", "GaborComponent",
-           "GaussianRBFComponent", "PerlinNoiseComponent", "WaveletComponent",
+           "GaussianRBFComponent", "PerlinNoiseComponent", "ThresholdedNoiseComponent", "WaveletComponent",
            "VoronoiNoiseComponent", "FractalBrownianMotionComponent",
            "RidgedMultifractalComponent", "TurbulenceNoiseComponent",
            "DomainWarpedNoiseComponent", "AnisotropicGaussianComponent", "LineComponent",
