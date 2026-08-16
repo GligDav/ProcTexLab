@@ -87,6 +87,11 @@ def test_component_variants_and_seed_changes():
                            VoronoiNoiseComponent(seed=2).basis(u, v))
     assert not np.allclose(DifferenceOfGaussiansComponent(mode="dog").basis(u, v),
                            DifferenceOfGaussiansComponent(mode="log").basis(u, v))
+    isotropic = RidgedMultifractalComponent(seed=4).basis(u, v)
+    directional = RidgedMultifractalComponent(
+        seed=4, rotation=.6, anisotropy=2.5, ridge_power=4).basis(u, v)
+    assert np.min(directional) >= -1 and np.max(directional) <= 1
+    assert not np.allclose(isotropic, directional)
     for shape in ("disk", "box", "ring", "checker"):
         values = BinaryPrimitiveComponent(shape=shape).basis(u, v)
         assert set(np.unique(values)) <= {0.0, 1.0}
@@ -109,6 +114,8 @@ def test_thresholded_noise_has_bounded_sharp_regions_and_serializes():
     ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
     ("thresholded_noise", ThresholdedNoiseComponent(
         .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
+    ("ridged_multifractal", RidgedMultifractalComponent(
+        .2, frequency=2, octaves=4, ridge_power=3, seed=0)),
 ])
 def test_new_component_families_can_be_fitted(family, component):
     image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)

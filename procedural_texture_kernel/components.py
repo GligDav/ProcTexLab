@@ -200,10 +200,33 @@ class FractalBrownianMotionComponent(ProceduralComponent):
 @dataclass
 class RidgedMultifractalComponent(FractalBrownianMotionComponent):
     """Sharp ridges obtained by folding each noise octave."""
+    ridge_offset: float = 1.0
+    ridge_power: float = 2.0
+    rotation: float = 0.0
+    anisotropy: float = 1.0
     type_name: ClassVar[str] = "ridged_multifractal"
     def basis(self, u, v):
-        n = super().basis(u, v)
-        return 2.0 * (1.0 - np.abs(n)) ** 2 - 1.0
+        if self.octaves < 1:
+            raise ValueError("Ridged multifractal octaves must be at least one")
+        rng = np.random.default_rng(self.seed)
+        base = rng.permutation(256)
+        permutation = np.concatenate((base, base))
+        du, dv = u - .5, v - .5
+        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        ru = c * du + s * dv + .5 + self.offset_u
+        rv = (-s * du + c * dv) * max(float(self.anisotropy), 1e-6) + .5 + self.offset_v
+        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)), dtype=np.float64)
+        weight, frequency, total_weight = 1.0, self.frequency, 0.0
+        ridge_power = max(float(self.ridge_power), 1e-6)
+        for _ in range(self.octaves):
+            noise = PerlinNoiseComponent._noise(
+                ru * frequency, rv * frequency, permutation)
+            ridge = np.clip(self.ridge_offset - np.abs(noise), 0.0, 1.0) ** ridge_power
+            result += weight * ridge
+            total_weight += weight
+            weight *= self.persistence
+            frequency *= self.lacunarity
+        return 2.0 * result / max(total_weight, 1e-12) - 1.0
 
 @dataclass
 class TurbulenceNoiseComponent(FractalBrownianMotionComponent):

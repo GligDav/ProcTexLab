@@ -173,7 +173,6 @@ def _perlin_candidates(config, u, v):
     frequencies = (2.0, 4.0, 8.0, 16.0)
     families = {"perlin_noise": PerlinNoiseComponent,
                 "fbm": FractalBrownianMotionComponent,
-                "ridged_multifractal": RidgedMultifractalComponent,
                 "turbulence_noise": TurbulenceNoiseComponent,
                 "domain_warped_noise": DomainWarpedNoiseComponent,
                 "voronoi_noise": VoronoiNoiseComponent}
@@ -181,6 +180,16 @@ def _perlin_candidates(config, u, v):
             for family, cls in families.items() if family in config.component_families
             for index, f in enumerate(frequencies)
             if config.min_frequency <= f <= config.max_frequency]
+    if "ridged_multifractal" in config.component_families:
+        candidates.extend(
+            RidgedMultifractalComponent(
+                frequency=frequency, ridge_power=power,
+                rotation=rotation, seed=config.seed + index)
+            for index, frequency in enumerate(frequencies)
+            if config.min_frequency <= frequency <= config.max_frequency
+            for power in (1.5, 3.0)
+            for rotation in (0.0, np.pi / 4.0)
+        )
     if "thresholded_noise" in config.component_families:
         for index, frequency in enumerate(frequencies):
             if not config.min_frequency <= frequency <= config.max_frequency:
@@ -233,6 +242,14 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
             offset_v=p[3], rotation=p[4], threshold=p[5], edge_width=p[6])
+    elif isinstance(atom, RidgedMultifractalComponent):
+        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+              atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1),
+                  (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4)]
+        def make(p): return replace(
+            atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
+            ridge_offset=p[4], ridge_power=p[5], rotation=p[6], anisotropy=p[7])
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
