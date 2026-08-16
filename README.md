@@ -68,6 +68,8 @@ Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `
 
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
+Nonlinear refinement covers the principal smooth and structural families, including thresholded/ridged/domain-warped noise, fBm/turbulence, Voronoi, anisotropic Gaussians, lines, step edges, and DoG/LoG atoms. The fitter retains the original projected candidate whenever the bounded optimizer fails to improve its objective.
+
 Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
 the normal multiband fit. It activates only when the fitting-resolution
 `high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters

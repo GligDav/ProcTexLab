@@ -13,6 +13,7 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     VoronoiNoiseComponent, SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
+from procedural_texture_kernel.fitting import _refine_new_atom
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
@@ -125,6 +126,33 @@ def test_new_component_families_can_be_fitted(family, component):
     result = TextureFitter(config).fit(image)
     assert len(result.model.components) == 1
     assert result.model.components[0].type_name == family
+
+@pytest.mark.parametrize("initial,target_atom", [
+    (AnisotropicGaussianComponent(.4, .35, .45, .12, .06, .2),
+     AnisotropicGaussianComponent(.4, .55, .5, .15, .08, .4)),
+    (LineComponent(.4, .35, .45, .08, .7, .2, .03),
+     LineComponent(.4, .55, .5, .05, .9, .4, .015)),
+    (StepEdgeComponent(.4, .35, .45, .2, .04),
+     StepEdgeComponent(.4, .55, .5, .4, .02)),
+    (DifferenceOfGaussiansComponent(.4, .35, .45, .1, 1.6),
+     DifferenceOfGaussiansComponent(.4, .55, .5, .13, 2.0)),
+    (VoronoiNoiseComponent(.4, 3, .8, .1, -.1, 2),
+     VoronoiNoiseComponent(.4, 4, 1.0, .2, -.2, 2)),
+    (FractalBrownianMotionComponent(.4, 3, 4, .5, 2, .1, -.1, 2),
+     FractalBrownianMotionComponent(.4, 4, 4, .6, 2.2, .2, -.2, 2)),
+    (DomainWarpedNoiseComponent(.4, 3, 4, .5, 2, .1, -.1, 2, .1, 2),
+     DomainWarpedNoiseComponent(.4, 4, 4, .6, 2.2, .2, -.2, 2, .2, 3)),
+])
+def test_structural_atom_refinement_never_worsens_objective(initial, target_atom):
+    u, v = coordinate_grid(20, 18)
+    target = target_atom.evaluate(u, v)
+    loss = TextureLoss(target, TextureLossWeights(0, 0, 0, 0, 1))
+    current = np.zeros_like(target)
+    before, _ = loss.evaluate(current + initial.evaluate(u, v))
+    refined = _refine_new_atom(initial, current, loss, u, v, 8)
+    after, _ = loss.evaluate(current + refined.evaluate(u, v))
+    assert type(refined) is type(initial)
+    assert after <= before + 1e-15
 
 def test_metrics_known():
     m=calculate_metrics(np.array([0.,1.]),np.array([0.,0.]))

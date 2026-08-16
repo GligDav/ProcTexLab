@@ -275,6 +275,20 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
             ridge_offset=p[4], ridge_power=p[5], rotation=p[6], anisotropy=p[7])
+    elif isinstance(atom, DomainWarpedNoiseComponent):
+        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+              atom.warp_amplitude, atom.warp_frequency]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (0, .75), (.25, 16)]
+        def make(p): return replace(
+            atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
+            warp_amplitude=p[4], warp_frequency=p[5])
+    elif isinstance(atom, (FractalBrownianMotionComponent, TurbulenceNoiseComponent)):
+        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+              atom.persistence, atom.lacunarity]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (.1, .9), (1.25, 4)]
+        def make(p): return replace(
+            atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
+            persistence=p[4], lacunarity=p[5])
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
@@ -286,14 +300,51 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         bounds = [(-2, 2), (0, 1), (0, 1), (.02, .5), (.02, .5),
                   (.25, 32), (-np.pi, np.pi), (-np.pi, np.pi)]
         def make(p): return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
+    elif isinstance(atom, VoronoiNoiseComponent):
+        x0 = [atom.amplitude, atom.frequency, atom.jitter, atom.offset_u, atom.offset_v]
+        bounds = [(-2, 2), (.25, 32), (0, 1.5), (-1, 1), (-1, 1)]
+        def make(p): return replace(
+            atom, amplitude=p[0], frequency=p[1], jitter=p[2],
+            offset_u=p[3], offset_v=p[4])
+    elif isinstance(atom, AnisotropicGaussianComponent):
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u,
+              atom.sigma_v, atom.orientation]
+        bounds = [(-2, 2), (0, 1), (0, 1), (.01, .75), (.01, .75),
+                  (-np.pi, np.pi)]
+        def make(p): return replace(
+            atom, amplitude=p[0], center_u=p[1], center_v=p[2],
+            sigma_u=p[3], sigma_v=p[4], orientation=p[5])
+    elif isinstance(atom, LineComponent):
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.width,
+              atom.length, atom.orientation, atom.softness]
+        bounds = [(-2, 2), (0, 1), (0, 1), (.005, .5), (.02, 2),
+                  (-np.pi, np.pi), (.002, .25)]
+        def make(p): return replace(
+            atom, amplitude=p[0], center_u=p[1], center_v=p[2], width=p[3],
+            length=p[4], orientation=p[5], softness=p[6])
+    elif isinstance(atom, StepEdgeComponent):
+        x0 = [atom.amplitude, atom.center_u, atom.center_v,
+              atom.orientation, atom.softness]
+        bounds = [(-2, 2), (0, 1), (0, 1), (-np.pi, np.pi), (.001, .25)]
+        def make(p): return replace(
+            atom, amplitude=p[0], center_u=p[1], center_v=p[2],
+            orientation=p[3], softness=p[4])
+    elif isinstance(atom, DifferenceOfGaussiansComponent):
+        x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma, atom.ratio]
+        bounds = [(-2, 2), (0, 1), (0, 1), (.01, .5), (1.01, 4)]
+        def make(p): return replace(
+            atom, amplitude=p[0], center_u=p[1], center_v=p[2],
+            sigma=p[3], ratio=p[4])
     else:
         # These families have discrete modes or heterogeneous parameterizations;
         # projection already gives their exact least-squares amplitude.
         return atom
     def objective(p): return target_loss.evaluate(current + make(p).evaluate(u, v))[0]
+    initial_loss = objective(x0)
     result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
                       options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})
-    return make(result.x)
+    refined = make(result.x)
+    return refined if np.isfinite(result.fun) and result.fun <= initial_loss else atom
 
 def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
               band_count: int, progress_callback=None,
