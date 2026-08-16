@@ -157,6 +157,40 @@ class ThresholdedNoiseComponent(ProceduralComponent):
         smooth = t * t * (3.0 - 2.0 * t)
         return 2.0 * smooth - 1.0
 
+
+@dataclass
+class MaskedNoiseComponent(ProceduralComponent):
+    """Detail noise restricted to one side of a coherent thresholded-noise mask."""
+    mask_frequency: float = 2.0
+    mask_octaves: int = 4
+    mask_offset_u: float = 0.0
+    mask_offset_v: float = 0.0
+    mask_rotation: float = 0.0
+    mask_threshold: float = 0.0
+    mask_edge_width: float = 0.08
+    mask_seed: int = 0
+    detail_frequency: float = 8.0
+    detail_octaves: int = 3
+    detail_offset_u: float = 0.0
+    detail_offset_v: float = 0.0
+    detail_seed: int = 1
+    invert_mask: bool = False
+    type_name: ClassVar[str] = "masked_noise"
+
+    def basis(self, u, v):
+        mask = ThresholdedNoiseComponent(
+            frequency=self.mask_frequency, octaves=self.mask_octaves,
+            offset_u=self.mask_offset_u, offset_v=self.mask_offset_v,
+            rotation=self.mask_rotation, threshold=self.mask_threshold,
+            edge_width=self.mask_edge_width, seed=self.mask_seed).basis(u, v)
+        mask = .5 * (mask + 1.0)
+        if self.invert_mask:
+            mask = 1.0 - mask
+        detail = _perlin_basis(
+            u, v, self.detail_frequency, self.detail_octaves, .5, 2.0,
+            self.detail_offset_u, self.detail_offset_v, self.detail_seed)
+        return mask * detail
+
 @dataclass
 class VoronoiNoiseComponent(ProceduralComponent):
     """Seeded cellular (Worley/Voronoi) nearest-feature noise."""
@@ -398,7 +432,7 @@ class SimpleConstantComponent(ProceduralComponent):
 
 COMPONENT_TYPES = {c.type_name: c for c in (
     SinusoidComponent, GaborComponent, GaussianRBFComponent,
-    PerlinNoiseComponent, ThresholdedNoiseComponent, WaveletComponent,
+    PerlinNoiseComponent, ThresholdedNoiseComponent, MaskedNoiseComponent, WaveletComponent,
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,

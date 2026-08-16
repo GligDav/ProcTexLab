@@ -7,7 +7,7 @@ from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFCom
     WaveletComponent, normalize_image)
 from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
-    FractalBrownianMotionComponent, LineComponent, PolynomialTrendComponent,
+    FractalBrownianMotionComponent, LineComponent, MaskedNoiseComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, SimpleConstantComponent)
@@ -72,6 +72,7 @@ def test_new_component_serialization(component):
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
     BinaryPrimitiveComponent(), SimpleConstantComponent(), ThresholdedNoiseComponent(seed=3),
+    MaskedNoiseComponent(mask_seed=3, detail_seed=7),
 ])
 def test_extended_components_are_finite_deterministic_and_serializable(component):
     u, v = coordinate_grid(23, 17)
@@ -112,6 +113,16 @@ def test_thresholded_noise_has_bounded_sharp_regions_and_serializes():
     assert isinstance(restored.components[0], ThresholdedNoiseComponent)
     assert np.allclose(sharp.evaluate(u, v), restored.evaluate_grid(u, v))
 
+def test_masked_noise_complement_partitions_the_same_detail_field():
+    u, v = coordinate_grid(40, 32)
+    normal = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=False)
+    inverse = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=True)
+    detail = PerlinNoiseComponent(
+        frequency=normal.detail_frequency, octaves=normal.detail_octaves,
+        seed=normal.detail_seed).basis(u, v)
+    assert np.allclose(normal.basis(u, v) + inverse.basis(u, v), detail)
+    assert not np.allclose(normal.basis(u, v), inverse.basis(u, v))
+
 @pytest.mark.parametrize("family, component", [
     ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
     ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
@@ -119,6 +130,9 @@ def test_thresholded_noise_has_bounded_sharp_regions_and_serializes():
         .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
     ("ridged_multifractal", RidgedMultifractalComponent(
         .2, frequency=2, octaves=4, ridge_power=3, seed=0)),
+    ("masked_noise", MaskedNoiseComponent(
+        .2, mask_frequency=2, mask_seed=0, detail_frequency=8,
+        detail_seed=1009)),
 ])
 def test_new_component_families_can_be_fitted(family, component):
     image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)
@@ -311,6 +325,17 @@ def test_noise_candidate_seed_bank_is_deterministic_and_bounded():
     assert 1 <= len(first) <= 6
     assert {atom.seed for atom in first} == {0, 1}
     assert [atom.to_dict() for atom in first] == [atom.to_dict() for atom in second]
+
+def test_masked_noise_candidates_cover_both_regions():
+    y, x = np.indices((24, 28))
+    residual = np.where(x < 10, .5, -.2) + .05 * np.sin(2*np.pi*y/5)
+    u, v = coordinate_grid(28, 24)
+    config = FitConfig(component_families=("masked_noise",),
+                       noise_seed_candidates=1)
+    candidates = _perlin_candidates(residual, config, u, v)
+    assert candidates
+    assert {atom.invert_mask for atom in candidates} == {False, True}
+    assert all(isinstance(atom, MaskedNoiseComponent) for atom in candidates)
 
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS

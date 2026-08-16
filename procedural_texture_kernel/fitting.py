@@ -9,6 +9,7 @@ from scipy.optimize import minimize
 from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
     FractalBrownianMotionComponent, GaborComponent, GaussianRBFComponent, LineComponent,
+    MaskedNoiseComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
@@ -29,6 +30,7 @@ _DETAIL_FAMILIES = frozenset({
 })
 _STRUCTURE_FAMILIES = frozenset({
     "thresholded_noise", "domain_warped_noise", "ridged_multifractal",
+    "masked_noise",
     "voronoi_noise", "fbm", "anisotropic_gaussian", "gaussian_rbf",
     "step_edge", "polynomial_trend", "binary_primitive", "simple_constant",
     "radial_wave", "spiral_wave", "line",
@@ -169,7 +171,7 @@ def _local_structure_estimate(residual, iy: int, ix: int, gradients=None):
 
 def _adaptive_noise_frequencies(residual, config):
     """Combine residual spectral peaks with stable octave anchors."""
-    probes = _fft_sinusoid_candidates(residual, config, 4)
+    probes = _fft_sinusoid_candidates(residual, config, 2)
     proposed = [float(np.hypot(atom.frequency_u, atom.frequency_v)) for atom in probes]
     proposed.extend((2.0, 4.0, 8.0, 16.0))
     frequencies = []
@@ -272,6 +274,22 @@ def _perlin_candidates(residual, config, u, v):
                     for edge_width in (.04, .12):
                         candidates.append(replace(
                             prototype, threshold=float(threshold), edge_width=edge_width))
+    if "masked_noise" in config.component_families:
+        coverage = float(np.clip(np.mean(residual > 0), .1, .9))
+        for mask_frequency in frequencies:
+            detail_frequency = float(np.clip(
+                max(mask_frequency * 2.0, frequencies[0]),
+                config.min_frequency, config.max_frequency))
+            for seed in seeds:
+                mask_source = ThresholdedNoiseComponent(
+                    frequency=mask_frequency, seed=seed)
+                noise = _perlin_basis_for_threshold(mask_source, u, v)
+                threshold = float(np.quantile(noise, 1.0 - coverage))
+                candidates.extend(MaskedNoiseComponent(
+                    mask_frequency=mask_frequency, mask_threshold=threshold,
+                    mask_seed=seed, detail_frequency=detail_frequency,
+                    detail_seed=seed + 1009, invert_mask=invert)
+                    for invert in (False, True))
     return candidates
 
 
@@ -313,6 +331,18 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
             offset_v=p[3], rotation=p[4], threshold=p[5], edge_width=p[6])
+    elif isinstance(atom, MaskedNoiseComponent):
+        x0 = [atom.amplitude, atom.mask_frequency, atom.mask_offset_u,
+              atom.mask_offset_v, atom.mask_rotation, atom.mask_threshold,
+              atom.mask_edge_width, atom.detail_frequency,
+              atom.detail_offset_u, atom.detail_offset_v]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (-np.pi, np.pi),
+                  (-1, 1), (.005, .5), (.25, 32), (-1, 1), (-1, 1)]
+        def make(p): return replace(
+            atom, amplitude=p[0], mask_frequency=p[1], mask_offset_u=p[2],
+            mask_offset_v=p[3], mask_rotation=p[4], mask_threshold=p[5],
+            mask_edge_width=p[6], detail_frequency=p[7],
+            detail_offset_u=p[8], detail_offset_v=p[9])
     elif isinstance(atom, RidgedMultifractalComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]

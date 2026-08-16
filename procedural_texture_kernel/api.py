@@ -17,7 +17,8 @@ from .spectral_diagnostics import compare_spectra
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
 SUPPORTED_COMPONENT_FAMILIES = (
-    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "thresholded_noise", "wavelet",
+    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "thresholded_noise",
+    "masked_noise", "wavelet",
     "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
     "domain_warped_noise", "anisotropic_gaussian", "line", "step_edge",
     "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
