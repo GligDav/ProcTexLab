@@ -20,6 +20,7 @@ from .model import ProceduralTextureModel
 from .texture_loss import TextureLoss, TextureLossWeights
 from .weight_estimator import WeightEstimator
 from .spectral_diagnostics import compare_spectra
+from .shader_graph import ShaderGraph, ShaderGraphComponent, ShaderNode
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -31,6 +32,7 @@ _DETAIL_FAMILIES = frozenset({
 _STRUCTURE_FAMILIES = frozenset({
     "thresholded_noise", "domain_warped_noise", "ridged_multifractal",
     "masked_noise",
+    "shader_graph",
     "voronoi_noise", "fbm", "anisotropic_gaussian", "gaussian_rbf",
     "step_edge", "polynomial_trend", "binary_primitive", "simple_constant",
     "radial_wave", "spiral_wave", "line",
@@ -290,6 +292,29 @@ def _perlin_candidates(residual, config, u, v):
                     mask_seed=seed, detail_frequency=detail_frequency,
                     detail_seed=seed + 1009, invert_mask=invert)
                     for invert in (False, True))
+    if "shader_graph" in config.component_families:
+        coverage = float(np.clip(np.mean(residual > 0), .1, .9))
+        for mask_frequency in frequencies:
+            detail_frequency = float(np.clip(
+                max(mask_frequency * 2.0, frequencies[0]),
+                config.min_frequency, config.max_frequency))
+            for seed in seeds:
+                mask_source = PerlinNoiseComponent(
+                    frequency=mask_frequency, octaves=4, seed=seed)
+                mask_values = mask_source.basis(u, v)
+                threshold = float(np.quantile(mask_values, 1.0-coverage))
+                graph = ShaderGraph([
+                    ShaderNode("mask_source", "component", component=mask_source),
+                    ShaderNode("mask", "smoothstep", ("mask_source",),
+                               edge0=threshold-.08, edge1=threshold+.08),
+                    ShaderNode("detail_a", "component", component=PerlinNoiseComponent(
+                        frequency=detail_frequency, octaves=3, seed=seed+1009)),
+                    ShaderNode("detail_b", "component", component=PerlinNoiseComponent(
+                        frequency=min(config.max_frequency, detail_frequency*1.5),
+                        octaves=3, seed=seed+2017)),
+                    ShaderNode("result", "mix", ("detail_a", "detail_b", "mask")),
+                ], "result")
+                candidates.append(ShaderGraphComponent(graph=graph))
     return candidates
 
 
@@ -411,6 +436,38 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
         def make(p): return replace(
             atom, amplitude=p[0], center_u=p[1], center_v=p[2],
             sigma=p[3], ratio=p[4])
+    elif isinstance(atom, ShaderGraphComponent):
+        nodes = {node.node_id: node for node in atom.graph.nodes}
+        required = {"mask_source", "mask", "detail_a", "detail_b", "result"}
+        if set(nodes) != required:
+            return atom
+        mask_source = nodes["mask_source"].component
+        detail_a = nodes["detail_a"].component
+        detail_b = nodes["detail_b"].component
+        if not all(isinstance(component, PerlinNoiseComponent)
+                   for component in (mask_source, detail_a, detail_b)):
+            return atom
+        threshold = .5 * (nodes["mask"].edge0 + nodes["mask"].edge1)
+        edge_width = .5 * (nodes["mask"].edge1 - nodes["mask"].edge0)
+        x0 = [atom.amplitude, mask_source.frequency, mask_source.offset_u,
+              mask_source.offset_v, threshold, edge_width,
+              detail_a.frequency, detail_a.offset_u, detail_a.offset_v,
+              detail_b.frequency, detail_b.offset_u, detail_b.offset_v]
+        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (-1, 1), (.005, .5),
+                  (.25, 32), (-1, 1), (-1, 1), (.25, 32), (-1, 1), (-1, 1)]
+        def make(p):
+            mask = replace(mask_source, frequency=p[1], offset_u=p[2], offset_v=p[3])
+            first = replace(detail_a, frequency=p[6], offset_u=p[7], offset_v=p[8])
+            second = replace(detail_b, frequency=p[9], offset_u=p[10], offset_v=p[11])
+            graph = ShaderGraph([
+                ShaderNode("mask_source", "component", component=mask),
+                ShaderNode("mask", "smoothstep", ("mask_source",),
+                           edge0=p[4]-p[5], edge1=p[4]+p[5]),
+                ShaderNode("detail_a", "component", component=first),
+                ShaderNode("detail_b", "component", component=second),
+                ShaderNode("result", "mix", ("detail_a", "detail_b", "mask")),
+            ], "result")
+            return ShaderGraphComponent(p[0], graph)
     else:
         # These families have discrete modes or heterogeneous parameterizations;
         # projection already gives their exact least-squares amplitude.

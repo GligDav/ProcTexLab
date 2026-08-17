@@ -4,6 +4,7 @@ from .api import (DEFAULT_DETAIL_COMPONENT_FAMILIES, FitConfig, FitResult,
 from .components import *
 from .io import load_image, normalize_image
 from .model import ProceduralTextureModel
+from .shader_graph import ShaderGraph, ShaderGraphComponent, ShaderNode
 from .decomposition import ImageDecomposition, LaplacianPyramid, create_decomposition
 from .texture_loss import TextureLossWeights, calculate_texture_loss
 from .spectral_diagnostics import RadialPowerSpectrum, compare_spectra, radial_power_spectrum
@@ -14,6 +15,7 @@ __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "ProceduralComponent", "SinusoidComponent", "GaborComponent",
            "GaussianRBFComponent", "PerlinNoiseComponent", "ThresholdedNoiseComponent",
            "MaskedNoiseComponent", "WaveletComponent",
+           "ShaderNode", "ShaderGraph", "ShaderGraphComponent",
            "VoronoiNoiseComponent", "FractalBrownianMotionComponent",
            "RidgedMultifractalComponent", "TurbulenceNoiseComponent",
            "DomainWarpedNoiseComponent", "AnisotropicGaussianComponent", "LineComponent",

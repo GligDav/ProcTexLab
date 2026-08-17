@@ -14,6 +14,7 @@ ATOM_LABELS = {
     "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
     "perlin_noise": "Perlin noise", "thresholded_noise": "Thresholded noise",
     "masked_noise": "Masked region detail", "wavelet": "Wavelet",
+    "shader_graph": "Shader graph region mix",
     "voronoi_noise": "Voronoi noise", "fbm": "Fractal Brownian motion (fBm)",
     "ridged_multifractal": "Ridged multifractal", "turbulence_noise": "Turbulence noise",
     "domain_warped_noise": "Domain-warped noise",

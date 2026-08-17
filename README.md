@@ -72,6 +72,8 @@ Candidate initialization is residual-adaptive: dominant spectral peaks propose n
 
 `masked_noise` is a deliberately constrained compositional atom: it applies independent detail noise to either side of a coherent mask without introducing a general shader-graph search space. Both mask sides are proposed, while mask shape and detail placement are refined continuously.
 
+The experimental `shader_graph` family adds a serializable, acyclic scalar DAG with component, constant, add, multiply, smoothstep, one-minus, and mix nodes. Graphs are topologically ordered and capped at 64 nodes. The fitter intentionally searches only a five-node `noise mask -> smoothstep -> mix(two detail fields)` topology; arbitrary graph-topology evolution is not enabled.
+
 Nonlinear refinement covers the principal smooth and structural families, including thresholded/ridged/domain-warped noise, fBm/turbulence, Voronoi, anisotropic Gaussians, lines, step edges, and DoG/LoG atoms. The fitter retains the original projected candidate whenever the bounded optimizer fails to improve its objective.
 
 Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
@@ -104,6 +106,7 @@ The component types are:
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
 - `ThresholdedNoiseComponent`: a rotated fBm field remapped through a smooth threshold, with controllable threshold and edge width for coherent high-contrast regions.
 - `MaskedNoiseComponent`: independent detail noise restricted to either side of a smooth thresholded-noise region mask.
+- `ShaderGraphComponent`: an embedded validated scalar DAG; currently fitted as a coherent mask mixing two independently seeded detail fields.
 - `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
 - Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`. Ridged multifractals fold every octave independently and expose ridge offset/power, rotation, and anisotropy for vein-like structures.
 - Geometric/local atoms: `AnisotropicGaussianComponent`, `LineComponent`, `StepEdgeComponent`, `DifferenceOfGaussiansComponent` (`dog` or `log` mode), and `BinaryPrimitiveComponent` (disk, box, ring, or checker).

@@ -444,6 +444,9 @@ def component_from_dict(data: dict) -> ProceduralComponent:
     """Restore one component from JSON-compatible data."""
     values = dict(data)
     kind = values.pop("type", None)
+    if kind == "shader_graph":
+        from .shader_graph import ShaderGraphComponent
+        return ShaderGraphComponent.from_dict(values)
     try:
         cls = COMPONENT_TYPES[kind]
     except (KeyError, TypeError) as exc:
