@@ -128,6 +128,70 @@ def _perlin_basis(u, v, frequency, octaves, persistence, lacunarity,
                                 offset_u, offset_v, seed).basis(u, v)
 
 @dataclass
+class ThresholdedNoiseComponent(ProceduralComponent):
+    """Smoothly thresholded, rotated fBm field for coherent binary regions."""
+    frequency: float = 2.0
+    octaves: int = 4
+    persistence: float = 0.5
+    lacunarity: float = 2.0
+    offset_u: float = 0.0
+    offset_v: float = 0.0
+    rotation: float = 0.0
+    threshold: float = 0.0
+    edge_width: float = 0.08
+    seed: int = 0
+    type_name: ClassVar[str] = "thresholded_noise"
+
+    def basis(self, u, v):
+        # Rotate around the source-domain center while retaining procedural
+        # continuation outside [0, 1).  Offsets remain in rotated UV space.
+        du, dv = u - .5, v - .5
+        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        ru = c * du + s * dv + .5
+        rv = -s * du + c * dv + .5
+        noise = _perlin_basis(ru, rv, self.frequency, self.octaves,
+                              self.persistence, self.lacunarity,
+                              self.offset_u, self.offset_v, self.seed)
+        width = max(float(self.edge_width), 1e-12)
+        t = np.clip((noise - (self.threshold - width)) / (2.0 * width), 0.0, 1.0)
+        smooth = t * t * (3.0 - 2.0 * t)
+        return 2.0 * smooth - 1.0
+
+
+@dataclass
+class MaskedNoiseComponent(ProceduralComponent):
+    """Detail noise restricted to one side of a coherent thresholded-noise mask."""
+    mask_frequency: float = 2.0
+    mask_octaves: int = 4
+    mask_offset_u: float = 0.0
+    mask_offset_v: float = 0.0
+    mask_rotation: float = 0.0
+    mask_threshold: float = 0.0
+    mask_edge_width: float = 0.08
+    mask_seed: int = 0
+    detail_frequency: float = 8.0
+    detail_octaves: int = 3
+    detail_offset_u: float = 0.0
+    detail_offset_v: float = 0.0
+    detail_seed: int = 1
+    invert_mask: bool = False
+    type_name: ClassVar[str] = "masked_noise"
+
+    def basis(self, u, v):
+        mask = ThresholdedNoiseComponent(
+            frequency=self.mask_frequency, octaves=self.mask_octaves,
+            offset_u=self.mask_offset_u, offset_v=self.mask_offset_v,
+            rotation=self.mask_rotation, threshold=self.mask_threshold,
+            edge_width=self.mask_edge_width, seed=self.mask_seed).basis(u, v)
+        mask = .5 * (mask + 1.0)
+        if self.invert_mask:
+            mask = 1.0 - mask
+        detail = _perlin_basis(
+            u, v, self.detail_frequency, self.detail_octaves, .5, 2.0,
+            self.detail_offset_u, self.detail_offset_v, self.detail_seed)
+        return mask * detail
+
+@dataclass
 class VoronoiNoiseComponent(ProceduralComponent):
     """Seeded cellular (Worley/Voronoi) nearest-feature noise."""
     frequency: float = 5.0
@@ -170,10 +234,33 @@ class FractalBrownianMotionComponent(ProceduralComponent):
 @dataclass
 class RidgedMultifractalComponent(FractalBrownianMotionComponent):
     """Sharp ridges obtained by folding each noise octave."""
+    ridge_offset: float = 1.0
+    ridge_power: float = 2.0
+    rotation: float = 0.0
+    anisotropy: float = 1.0
     type_name: ClassVar[str] = "ridged_multifractal"
     def basis(self, u, v):
-        n = super().basis(u, v)
-        return 2.0 * (1.0 - np.abs(n)) ** 2 - 1.0
+        if self.octaves < 1:
+            raise ValueError("Ridged multifractal octaves must be at least one")
+        rng = np.random.default_rng(self.seed)
+        base = rng.permutation(256)
+        permutation = np.concatenate((base, base))
+        du, dv = u - .5, v - .5
+        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        ru = c * du + s * dv + .5 + self.offset_u
+        rv = (-s * du + c * dv) * max(float(self.anisotropy), 1e-6) + .5 + self.offset_v
+        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)), dtype=np.float64)
+        weight, frequency, total_weight = 1.0, self.frequency, 0.0
+        ridge_power = max(float(self.ridge_power), 1e-6)
+        for _ in range(self.octaves):
+            noise = PerlinNoiseComponent._noise(
+                ru * frequency, rv * frequency, permutation)
+            ridge = np.clip(self.ridge_offset - np.abs(noise), 0.0, 1.0) ** ridge_power
+            result += weight * ridge
+            total_weight += weight
+            weight *= self.persistence
+            frequency *= self.lacunarity
+        return 2.0 * result / max(total_weight, 1e-12) - 1.0
 
 @dataclass
 class TurbulenceNoiseComponent(FractalBrownianMotionComponent):
@@ -345,7 +432,7 @@ class SimpleConstantComponent(ProceduralComponent):
 
 COMPONENT_TYPES = {c.type_name: c for c in (
     SinusoidComponent, GaborComponent, GaussianRBFComponent,
-    PerlinNoiseComponent, WaveletComponent,
+    PerlinNoiseComponent, ThresholdedNoiseComponent, MaskedNoiseComponent, WaveletComponent,
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,
@@ -357,6 +444,9 @@ def component_from_dict(data: dict) -> ProceduralComponent:
     """Restore one component from JSON-compatible data."""
     values = dict(data)
     kind = values.pop("type", None)
+    if kind == "shader_graph":
+        from .shader_graph import ShaderGraphComponent
+        return ShaderGraphComponent.from_dict(values)
     try:
         cls = COMPONENT_TYPES[kind]
     except (KeyError, TypeError) as exc:

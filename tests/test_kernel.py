@@ -1,17 +1,21 @@
 import json
 import numpy as np
 import pytest
+from scipy.ndimage import gaussian_filter
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
     PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent, TextureFitter,
     WaveletComponent, normalize_image)
 from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
-    FractalBrownianMotionComponent, LineComponent, PolynomialTrendComponent,
+    FractalBrownianMotionComponent, LineComponent, MaskedNoiseComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
-    SpiralWaveComponent, StepEdgeComponent, TurbulenceNoiseComponent,
+    SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
+from procedural_texture_kernel.fitting import (
+    _adaptive_noise_frequencies, _local_structure_estimate,
+    _perlin_candidates, _refine_new_atom)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
@@ -67,7 +71,8 @@ def test_new_component_serialization(component):
     DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
-    BinaryPrimitiveComponent(), SimpleConstantComponent(),
+    BinaryPrimitiveComponent(), SimpleConstantComponent(), ThresholdedNoiseComponent(seed=3),
+    MaskedNoiseComponent(mask_seed=3, detail_seed=7),
 ])
 def test_extended_components_are_finite_deterministic_and_serializable(component):
     u, v = coordinate_grid(23, 17)
@@ -86,13 +91,48 @@ def test_component_variants_and_seed_changes():
                            VoronoiNoiseComponent(seed=2).basis(u, v))
     assert not np.allclose(DifferenceOfGaussiansComponent(mode="dog").basis(u, v),
                            DifferenceOfGaussiansComponent(mode="log").basis(u, v))
+    isotropic = RidgedMultifractalComponent(seed=4).basis(u, v)
+    directional = RidgedMultifractalComponent(
+        seed=4, rotation=.6, anisotropy=2.5, ridge_power=4).basis(u, v)
+    assert np.min(directional) >= -1 and np.max(directional) <= 1
+    assert not np.allclose(isotropic, directional)
     for shape in ("disk", "box", "ring", "checker"):
         values = BinaryPrimitiveComponent(shape=shape).basis(u, v)
         assert set(np.unique(values)) <= {0.0, 1.0}
 
+def test_thresholded_noise_has_bounded_sharp_regions_and_serializes():
+    u, v = coordinate_grid(48, 40)
+    soft = ThresholdedNoiseComponent(seed=5, frequency=3, edge_width=.2)
+    sharp = ThresholdedNoiseComponent(seed=5, frequency=3, edge_width=.01)
+    soft_values, sharp_values = soft.basis(u, v), sharp.basis(u, v)
+    assert np.min(sharp_values) >= -1 and np.max(sharp_values) <= 1
+    assert np.count_nonzero(np.abs(sharp_values) > .99) > np.count_nonzero(
+        np.abs(soft_values) > .99)
+    restored = ProceduralTextureModel.from_dict(json.loads(json.dumps(
+        ProceduralTextureModel(components=[sharp]).to_dict())))
+    assert isinstance(restored.components[0], ThresholdedNoiseComponent)
+    assert np.allclose(sharp.evaluate(u, v), restored.evaluate_grid(u, v))
+
+def test_masked_noise_complement_partitions_the_same_detail_field():
+    u, v = coordinate_grid(40, 32)
+    normal = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=False)
+    inverse = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=True)
+    detail = PerlinNoiseComponent(
+        frequency=normal.detail_frequency, octaves=normal.detail_octaves,
+        seed=normal.detail_seed).basis(u, v)
+    assert np.allclose(normal.basis(u, v) + inverse.basis(u, v), detail)
+    assert not np.allclose(normal.basis(u, v), inverse.basis(u, v))
+
 @pytest.mark.parametrize("family, component", [
     ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
     ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
+    ("thresholded_noise", ThresholdedNoiseComponent(
+        .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
+    ("ridged_multifractal", RidgedMultifractalComponent(
+        .2, frequency=2, octaves=4, ridge_power=3, seed=0)),
+    ("masked_noise", MaskedNoiseComponent(
+        .2, mask_frequency=2, mask_seed=0, detail_frequency=8,
+        detail_seed=1009)),
 ])
 def test_new_component_families_can_be_fitted(family, component):
     image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)
@@ -102,6 +142,33 @@ def test_new_component_families_can_be_fitted(family, component):
     result = TextureFitter(config).fit(image)
     assert len(result.model.components) == 1
     assert result.model.components[0].type_name == family
+
+@pytest.mark.parametrize("initial,target_atom", [
+    (AnisotropicGaussianComponent(.4, .35, .45, .12, .06, .2),
+     AnisotropicGaussianComponent(.4, .55, .5, .15, .08, .4)),
+    (LineComponent(.4, .35, .45, .08, .7, .2, .03),
+     LineComponent(.4, .55, .5, .05, .9, .4, .015)),
+    (StepEdgeComponent(.4, .35, .45, .2, .04),
+     StepEdgeComponent(.4, .55, .5, .4, .02)),
+    (DifferenceOfGaussiansComponent(.4, .35, .45, .1, 1.6),
+     DifferenceOfGaussiansComponent(.4, .55, .5, .13, 2.0)),
+    (VoronoiNoiseComponent(.4, 3, .8, .1, -.1, 2),
+     VoronoiNoiseComponent(.4, 4, 1.0, .2, -.2, 2)),
+    (FractalBrownianMotionComponent(.4, 3, 4, .5, 2, .1, -.1, 2),
+     FractalBrownianMotionComponent(.4, 4, 4, .6, 2.2, .2, -.2, 2)),
+    (DomainWarpedNoiseComponent(.4, 3, 4, .5, 2, .1, -.1, 2, .1, 2),
+     DomainWarpedNoiseComponent(.4, 4, 4, .6, 2.2, .2, -.2, 2, .2, 3)),
+])
+def test_structural_atom_refinement_never_worsens_objective(initial, target_atom):
+    u, v = coordinate_grid(20, 18)
+    target = target_atom.evaluate(u, v)
+    loss = TextureLoss(target, TextureLossWeights(0, 0, 0, 0, 1))
+    current = np.zeros_like(target)
+    before, _ = loss.evaluate(current + initial.evaluate(u, v))
+    refined = _refine_new_atom(initial, current, loss, u, v, 8)
+    after, _ = loss.evaluate(current + refined.evaluate(u, v))
+    assert type(refined) is type(initial)
+    assert after <= before + 1e-15
 
 def test_metrics_known():
     m=calculate_metrics(np.array([0.,1.]),np.array([0.,0.]))
@@ -117,7 +184,8 @@ def test_texture_loss_is_statistical_and_reports_components():
     unrelated_loss, _ = evaluator.evaluate(rng.random(reference.shape))
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
-                                  "autocorrelation_loss", "gradient_loss", "mse_loss"}
+                                  "autocorrelation_loss", "gradient_loss",
+                                  "local_structure_loss", "local_contrast_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
     assert shifted_loss < np.mean((reference - shifted) ** 2)
 
@@ -131,6 +199,51 @@ def test_mse_texture_loss_component_and_weighting():
     total, parts = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 1)).evaluate(candidate)
     assert parts["mse_loss"] == pytest.approx(.25)
     assert total == pytest.approx(.25)
+
+def test_local_contrast_loss_detects_region_scale_changes():
+    y, x = np.indices((48, 48))
+    reference = (x >= 24).astype(float)
+    blurred = gaussian_filter(reference, 3.0)
+    weights = TextureLossWeights(0, 0, 0, 0, 0, 0, 1)
+    evaluator = TextureLoss(reference, weights)
+    exact, _ = evaluator.evaluate(reference)
+    changed, parts = evaluator.evaluate(blurred)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert changed == pytest.approx(parts["local_contrast_loss"])
+    assert changed > 0
+
+
+def test_local_structure_loss_detects_phase_scrambling():
+    y, x = np.indices((32, 32))
+    reference = np.sign(np.sin(2 * np.pi * x / 8) + np.sin(2 * np.pi * y / 16))
+    transformed = np.fft.fft2(reference)
+    rng = np.random.default_rng(9)
+    scrambled = np.fft.ifft2(np.abs(transformed) * np.exp(
+        1j * rng.uniform(-np.pi, np.pi, transformed.shape))).real
+    evaluator = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 0, 1),
+                            local_structure_scales=2,
+                            local_structure_orientations=4,
+                            local_structure_block_size=8)
+    exact, _ = evaluator.evaluate(reference)
+    changed, parts = evaluator.evaluate(scrambled)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert changed == pytest.approx(parts["local_structure_loss"])
+    assert changed > 0
+
+
+@pytest.mark.parametrize("setting", [
+    {"local_structure_scales": 0},
+    {"local_structure_orientations": 0},
+    {"local_structure_block_size": 0},
+])
+def test_local_structure_configuration_validation(setting):
+    with pytest.raises(ValueError, match="local structure"):
+        TextureLoss(np.zeros((8, 8)), **setting)
+
+
+def test_local_structure_candidate_limit_validation():
+    with pytest.raises(ValueError, match="local_structure_candidate_limit"):
+        FitConfig(local_structure_candidate_limit=0)
 
 def test_normalization():
     assert normalize_image(np.array([[0,255]],dtype=np.uint8)).tolist() == [[0,1]]
@@ -153,6 +266,76 @@ def test_constant_and_non_square():
 def test_min_improvement_validation(value):
     with pytest.raises(ValueError, match="min_improvement"):
         FitConfig(min_improvement=value)
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"detail_max_components": -1},
+    {"detail_min_frequency": -1},
+    {"detail_min_improvement": -1},
+    {"detail_hf_ratio_threshold": 0},
+    {"detail_base_sigma": 0},
+    {"detail_component_families": ("unknown",)},
+])
+def test_detail_refinement_configuration_validation(kwargs):
+    with pytest.raises(ValueError):
+        FitConfig(**kwargs)
+
+
+def test_detail_minimum_frequency_must_fit_enabled_frequency_range():
+    with pytest.raises(ValueError, match="detail_min_frequency"):
+        FitConfig(detail_refinement=True, detail_min_frequency=24, max_frequency=24)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_amplitude_refit_interval_validation(value):
+    with pytest.raises(ValueError, match="amplitude_refit_interval"):
+        FitConfig(amplitude_refit_interval=value)
+
+def test_band_aware_candidates_validation():
+    with pytest.raises(ValueError, match="band_aware_candidates"):
+        FitConfig(band_aware_candidates=1)
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_noise_seed_candidate_validation(value):
+    with pytest.raises(ValueError, match="noise_seed_candidates"):
+        FitConfig(noise_seed_candidates=value)
+
+def test_adaptive_noise_frequencies_include_residual_peak():
+    y, x = np.indices((40, 48))
+    residual = np.sin(2 * np.pi * (7 * x / 48 + 2 * y / 40))
+    frequencies = _adaptive_noise_frequencies(residual, FitConfig())
+    assert len(frequencies) <= 3
+    assert any(abs(frequency - np.hypot(7, 2)) < .5 for frequency in frequencies)
+
+def test_local_structure_estimate_detects_vertical_edge_normal():
+    residual = np.zeros((48, 48))
+    residual[:, 24:] = 1
+    normal, tangent, scale = _local_structure_estimate(residual, 24, 24)
+    assert abs(np.sin(normal)) < .2
+    assert abs(np.cos(tangent)) < .2
+    assert .025 <= scale <= .25
+
+def test_noise_candidate_seed_bank_is_deterministic_and_bounded():
+    residual = np.random.default_rng(3).normal(size=(20, 24))
+    u, v = coordinate_grid(24, 20)
+    config = FitConfig(component_families=("perlin_noise",),
+                       noise_seed_candidates=2)
+    first = _perlin_candidates(residual, config, u, v)
+    second = _perlin_candidates(residual, config, u, v)
+    assert 1 <= len(first) <= 6
+    assert {atom.seed for atom in first} == {0, 1}
+    assert [atom.to_dict() for atom in first] == [atom.to_dict() for atom in second]
+
+def test_masked_noise_candidates_cover_both_regions():
+    y, x = np.indices((24, 28))
+    residual = np.where(x < 10, .5, -.2) + .05 * np.sin(2*np.pi*y/5)
+    u, v = coordinate_grid(28, 24)
+    config = FitConfig(component_families=("masked_noise",),
+                       noise_seed_candidates=1)
+    candidates = _perlin_candidates(residual, config, u, v)
+    assert candidates
+    assert {atom.invert_mask for atom in candidates} == {False, True}
+    assert all(isinstance(atom, MaskedNoiseComponent) for atom in candidates)
 
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS

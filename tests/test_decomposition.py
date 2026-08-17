@@ -4,6 +4,7 @@ import pytest
 from procedural_texture_kernel import (FitConfig, LaplacianPyramid, SinusoidComponent,
                                        TextureFitter, create_decomposition)
 from procedural_texture_kernel.model import ProceduralTextureModel
+from procedural_texture_kernel.fitting import _families_for_band
 
 
 @pytest.mark.parametrize("shape,bands", [((31, 47), 1), ((32, 32), 5), ((9, 15), 7)])
@@ -18,6 +19,25 @@ def test_laplacian_pyramid_reconstructs_input(shape, bands):
 
 def test_laplacian_scales_are_octave_spaced():
     assert LaplacianPyramid(bands=5, base_sigma=.75).sigmas == (.75, 1.5, 3.0, 6.0)
+
+
+def test_band_aware_candidate_roles_follow_pyramid_order():
+    config = FitConfig()
+    high = _families_for_band(config, 0, 5)
+    middle = _families_for_band(config, 2, 5)
+    low = _families_for_band(config, 4, 5)
+    assert "wavelet" in high and "thresholded_noise" not in high
+    assert "wavelet" in middle and "thresholded_noise" in middle
+    assert "thresholded_noise" in low and "wavelet" not in low
+
+
+def test_band_roles_preserve_single_explicit_family_and_can_be_disabled():
+    selected = ("sinusoid",)
+    config = FitConfig(component_families=selected)
+    assert _families_for_band(config, 4, 5) == selected
+    disabled = FitConfig(component_families=("sinusoid", "thresholded_noise"),
+                         band_aware_candidates=False)
+    assert _families_for_band(disabled, 0, 5) == disabled.component_families
 
 
 def test_fitter_optimizes_each_target_band_independently():
@@ -59,7 +79,8 @@ def test_manual_band_weights_remain_available():
     result = TextureFitter(config).fit(np.arange(64, dtype=float).reshape(8, 8))
     assert result.metadata["objective"]["weight_mode"] == "manual"
     assert all(band["weights"] == {"spectrum": 2, "histogram": 3,
-                                   "autocorrelation": 4, "gradient": 5, "mse": 6}
+                                   "autocorrelation": 4, "gradient": 5, "mse": 6,
+                                   "local_structure": 0, "local_contrast": 0}
                for band in result.metadata["bands"])
     assert all("features" not in band for band in result.metadata["bands"])
 
@@ -69,3 +90,47 @@ def test_decomposition_configuration_validation():
         FitConfig(decomposition_bands=0)
     with pytest.raises(ValueError, match="unsupported decomposition"):
         create_decomposition("unknown")
+
+
+def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
+    y, x = np.indices((48, 48))
+    image = .5 + .2 * np.sin(2 * np.pi * x / 4)
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=0, fitting_resolution=None,
+        component_families=("sinusoid",), max_frequency=20,
+        detail_refinement=True, detail_max_components=1,
+        detail_min_frequency=8, detail_hf_ratio_threshold=.9,
+        max_iterations=20, min_improvement=0)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert detail["attempted"]
+    assert detail["accepted"]
+    assert detail["components"] == 1
+    assert detail["after_hf_absolute_error"] < detail["before_hf_absolute_error"]
+    assert detail["after_mse"] <= detail["before_mse"]
+
+
+def test_high_frequency_refinement_skips_when_threshold_is_met():
+    image = np.full((16, 16), .4)
+    result = TextureFitter(FitConfig(
+        max_components=0, fitting_resolution=None,
+        detail_refinement=True, detail_min_frequency=6)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert not detail["attempted"]
+    assert detail["reason"] == "high_frequency_ratio_meets_threshold"
+
+
+def test_joint_amplitude_refit_is_recorded_and_never_worsens_band_objective():
+    y, x = np.indices((32, 40))
+    image = (.5 + .18 * np.sin(2 * np.pi * x / 8)
+             + .1 * np.sin(2 * np.pi * (x + y) / 10))
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=2, fitting_resolution=None,
+        component_families=("sinusoid",), min_improvement=0,
+        joint_amplitude_refit=True, amplitude_refit_interval=1,
+        max_iterations=10)).fit(image)
+    iterations = result.metadata["bands"][0]["iterations"]
+    assert iterations
+    assert all(item["amplitude_refit"]["attempted"] for item in iterations)
+    assert all(item["amplitude_refit"]["after"]
+               <= item["amplitude_refit"]["before"] + 1e-15
+               for item in iterations)

@@ -43,6 +43,7 @@ result.save_json("fit.json")
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
 - `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, gradient-statistics, and MSE objective.
+- `spectral_diagnostics.py` reports absolute radial power spectra and target/result band-energy ratios without normalizing away high-frequency deficits.
 - `weight_estimator.py` independently describes a pyramid band and heuristically proposes normalized weights for the four statistical loss terms.
 - `api.py` exposes configuration, fitter, and result objects.
 - `io.py` handles raster loading and scalar normalization; `metrics.py` is reusable numerical evaluation.
@@ -65,6 +66,32 @@ manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
+With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
+
+Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 2); at most three noise frequencies are retained per iteration.
+
+`masked_noise` is a deliberately constrained compositional atom: it applies independent detail noise to either side of a coherent mask without introducing a general shader-graph search space. Both mask sides are proposed, while mask shape and detail placement are refined continuously.
+
+The experimental `shader_graph` family adds a serializable, acyclic scalar DAG with component, constant, add, multiply, smoothstep, one-minus, and mix nodes. Graphs are topologically ordered and capped at 64 nodes. The fitter intentionally searches only a five-node `noise mask -> smoothstep -> mix(two detail fields)` topology; arbitrary graph-topology evolution is not enabled.
+
+Nonlinear refinement covers the principal smooth and structural families, including thresholded/ridged/domain-warped noise, fBm/turbulence, Voronoi, anisotropic Gaussians, lines, step edges, and DoG/LoG atoms. The fitter retains the original projected candidate whenever the bounded optimizer fails to improve its objective.
+
+Set `detail_refinement=True` to run an adaptive high-frequency residual pass after
+the normal multiband fit. It activates only when the fitting-resolution
+`high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters
+the signed reconstruction residual, and fits a separate budget of detail atoms.
+The candidate is retained only when both absolute HF-energy error and full-image
+MSE improve. Configuration includes `detail_max_components`,
+`detail_min_frequency`, `detail_min_improvement`, `detail_base_sigma`, and
+`detail_component_families`. Detailed before/after diagnostics and the acceptance
+decision are stored in `result.metadata["detail_refinement"]`.
+
+With `joint_amplitude_refit=True` (the default), the fitter periodically solves
+all linear atom amplitudes, bias, and plane coefficients together. The refit runs
+after every `amplitude_refit_interval` accepted atoms and once at the end when
+needed. A refitted state is retained only if the complete band texture objective
+does not increase. Each decision is recorded in the band iteration metadata.
+
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model
@@ -77,12 +104,15 @@ The component types are:
 - `GaborComponent`: amplitude, center, two Gaussian widths, carrier frequency, orientation, phase.
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
+- `ThresholdedNoiseComponent`: a rotated fBm field remapped through a smooth threshold, with controllable threshold and edge width for coherent high-contrast regions.
+- `MaskedNoiseComponent`: independent detail noise restricted to either side of a smooth thresholded-noise region mask.
+- `ShaderGraphComponent`: an embedded validated scalar DAG; currently fitted as a coherent mask mixing two independently seeded detail fields.
 - `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
-- Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`.
+- Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`. Ridged multifractals fold every octave independently and expose ridge offset/power, rotation, and anisotropy for vein-like structures.
 - Geometric/local atoms: `AnisotropicGaussianComponent`, `LineComponent`, `StepEdgeComponent`, `DifferenceOfGaussiansComponent` (`dog` or `log` mode), and `BinaryPrimitiveComponent` (disk, box, ring, or checker).
 - Structured/global atoms: `PolynomialTrendComponent`, `RadialWaveComponent`, `SpiralWaveComponent`, and `SparseImpulseComponent`.
 
-All five names can be selected through `FitConfig.component_families`: `sinusoid`, `gabor`, `gaussian_rbf`, `perlin_noise`, and `wavelet`. They are enabled by default. Components can also be constructed and added directly:
+All registered names can be selected through `FitConfig.component_families`; they are enabled by default. Components can also be constructed and added directly. The fitter initializes `thresholded_noise` candidates from source-noise quantiles at several frequencies and edge widths, then refines amplitude, frequency, offset, rotation, threshold, and edge width against the configured objective.
 
 ```python
 from procedural_texture_kernel import PerlinNoiseComponent, WaveletComponent
@@ -97,7 +127,26 @@ model.add(WaveletComponent(amplitude=-0.1, center_u=0.4, center_v=0.6, scale_u=0
 
 2D grayscale and 3/4-channel RGB(A) arrays are accepted. Integer formats (including uint16) are divided by their dtype range; floating inputs already in `[0, 1]` are preserved, while out-of-range finite values are min/max normalized. RGB uses linear coefficients 0.2126/0.7152/0.0722; alpha is ignored. Empty, malformed, NaN, and infinite inputs raise descriptive errors.
 
-The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, `gradient_loss`, and `mse_loss`. MSE is also part of the configurable fitting objective; RMSE, MAE, PSNR, normalized RMSE, and correlation remain available as diagnostics.
+The primary reported metric is `texture_loss`, accompanied by `spectrum_loss`, `histogram_loss`, `autocorrelation_loss`, multiscale `gradient_loss`, `local_contrast_loss`, `local_structure_loss`, and `mse_loss`. The optional local-contrast term compares local standard-deviation distributions at several Gaussian scales and is controlled by `local_contrast_weight`. MSE is also part of the configurable fitting objective; RMSE, MAE, PSNR, normalized RMSE, and correlation remain available as diagnostics.
+
+The optional local-structure objective uses a cached multiscale, oriented complex
+filter bank. It compares response magnitude distributions, correlations between
+neighboring orientations, cross-scale magnitude correlations, and cross-scale
+phase coherence. Enable it with `local_structure_weight`; its scale count,
+orientation count, and spatial pooling size are controlled by
+`local_structure_scales`, `local_structure_orientations`, and
+`local_structure_block_size`. When enabled, residual correlation preselects at
+most `local_structure_candidate_limit` atoms for this expensive loss. The public
+API defaults its weight to zero because
+candidate evaluation becomes substantially more expensive; the development GUI
+defaults it to `0.5` for visual experiments.
+
+Every fit also records full-resolution absolute spectral diagnostics under
+`result.metadata["spectral_diagnostics"]`. The public `radial_power_spectrum`
+and `compare_spectra` functions can be used independently. Frequencies are
+reported as fractions of the axial Nyquist frequency; the comparison separates
+DC, very-low, low, mid, high, and very-high energy and includes a combined
+`high_frequency_ratio` (result divided by target).
 
 ## GUI and example
 
@@ -108,6 +157,10 @@ python -m gui.test_app
 ```
 
 It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+
+After a fit, the **Spectrum** button opens the full-resolution target/result
+diagnostics: absolute radial PSD curves on a logarithmic scale, per-band absolute
+and normalized energies, and the combined high-frequency energy ratio.
 
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:

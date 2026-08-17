@@ -12,15 +12,21 @@ from .io import normalize_image
 from .metrics import calculate_metrics
 from .model import ProceduralTextureModel
 from .texture_loss import TextureLossWeights, calculate_texture_loss
+from .spectral_diagnostics import compare_spectra
 
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
 SUPPORTED_COMPONENT_FAMILIES = (
-    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "wavelet",
+    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "thresholded_noise",
+    "masked_noise", "wavelet",
+    "shader_graph",
     "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
     "domain_warped_noise", "anisotropic_gaussian", "line", "step_edge",
     "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
     "sparse_impulse", "binary_primitive", "simple_constant"
+)
+DEFAULT_DETAIL_COMPONENT_FAMILIES = (
+    "sinusoid", "gabor", "wavelet", "dog_log", "sparse_impulse", "line"
 )
 
 @dataclass(frozen=True)
@@ -32,6 +38,7 @@ class FitConfig:
     fitting_resolution: int | None = 96
     component_families: tuple[str, ...] = SUPPORTED_COMPONENT_FAMILIES
     fft_candidates: int = 24
+    noise_seed_candidates: int = 2
     min_frequency: float = 0.5
     max_frequency: float = 24.0
     min_improvement: float = 1e-6
@@ -43,13 +50,33 @@ class FitConfig:
     autocorrelation_weight: float = 0.75
     gradient_weight: float = 0.5
     mse_weight: float = 1.0
+    local_structure_weight: float = 0.0
+    local_contrast_weight: float = 0.0
+    local_structure_scales: int = 3
+    local_structure_orientations: int = 4
+    local_structure_block_size: int = 8
+    local_structure_candidate_limit: int = 16
     decomposition_method: str = "laplacian"
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
+    detail_refinement: bool = False
+    detail_max_components: int = 4
+    detail_min_frequency: float = 6.0
+    detail_min_improvement: float = 1e-7
+    detail_hf_ratio_threshold: float = 0.85
+    detail_base_sigma: float = 1.0
+    detail_component_families: tuple[str, ...] = DEFAULT_DETAIL_COMPONENT_FAMILIES
+    joint_amplitude_refit: bool = True
+    amplitude_refit_interval: int = 2
+    band_aware_candidates: bool = True
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
             raise ValueError("component/iteration/candidate counts are invalid")
+        if (isinstance(self.noise_seed_candidates, bool)
+                or not isinstance(self.noise_seed_candidates, int)
+                or self.noise_seed_candidates < 1):
+            raise ValueError("noise_seed_candidates must be a positive integer")
         if self.fitting_resolution is not None and self.fitting_resolution < 8:
             raise ValueError("fitting_resolution must be at least 8 or None")
         if self.min_frequency < 0 or self.max_frequency <= self.min_frequency:
@@ -58,9 +85,42 @@ class FitConfig:
             raise ValueError("min_improvement must be a finite, non-negative number")
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
+        if self.detail_max_components < 0:
+            raise ValueError("detail_max_components must be non-negative")
+        if (not math.isfinite(self.detail_min_frequency)
+                or self.detail_min_frequency < 0):
+            raise ValueError("detail_min_frequency must be finite and non-negative")
+        if self.detail_refinement and self.detail_min_frequency >= self.max_frequency:
+            raise ValueError("detail_min_frequency must be below max_frequency")
+        if (not math.isfinite(self.detail_min_improvement)
+                or self.detail_min_improvement < 0):
+            raise ValueError("detail_min_improvement must be finite and non-negative")
+        if (not math.isfinite(self.detail_hf_ratio_threshold)
+                or self.detail_hf_ratio_threshold <= 0):
+            raise ValueError("detail_hf_ratio_threshold must be finite and positive")
+        if not math.isfinite(self.detail_base_sigma) or self.detail_base_sigma <= 0:
+            raise ValueError("detail_base_sigma must be finite and positive")
+        if not set(self.detail_component_families) <= allowed:
+            raise ValueError("unsupported detail component family")
+        if (isinstance(self.amplitude_refit_interval, bool)
+                or not isinstance(self.amplitude_refit_interval, int)
+                or self.amplitude_refit_interval < 1):
+            raise ValueError("amplitude_refit_interval must be a positive integer")
+        if not isinstance(self.band_aware_candidates, bool):
+            raise ValueError("band_aware_candidates must be boolean")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
-                           self.mse_weight)
+                           self.mse_weight, self.local_structure_weight,
+                           self.local_contrast_weight)
+        for value, name in ((self.local_structure_scales, "local_structure_scales"),
+                            (self.local_structure_orientations,
+                             "local_structure_orientations"),
+                            (self.local_structure_block_size,
+                             "local_structure_block_size"),
+                            (self.local_structure_candidate_limit,
+                             "local_structure_candidate_limit")):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
         create_decomposition(self.decomposition_method, self.decomposition_bands,
                              self.decomposition_base_sigma)
 
@@ -69,7 +129,8 @@ class FitConfig:
         """Return manual weights and the full-image diagnostic weights."""
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                                   self.autocorrelation_weight, self.gradient_weight,
-                                  self.mse_weight)
+                                  self.mse_weight, self.local_structure_weight,
+                                  self.local_contrast_weight)
 
 @dataclass
 class FitResult:
@@ -103,6 +164,11 @@ class TextureFitter:
         model, metadata = fit_texture(target, self.config, progress_callback, cancel_callback)
         reconstruction = model.evaluate(target.shape[1], target.shape[0])
         metrics = calculate_metrics(target, reconstruction)
-        metrics.update(calculate_texture_loss(target, reconstruction, self.config.texture_loss_weights))
+        metrics.update(calculate_texture_loss(
+            target, reconstruction, self.config.texture_loss_weights,
+            local_structure_scales=self.config.local_structure_scales,
+            local_structure_orientations=self.config.local_structure_orientations,
+            local_structure_block_size=self.config.local_structure_block_size))
+        metadata["spectral_diagnostics"] = compare_spectra(target, reconstruction)
         return FitResult(model, metrics, reconstruction,
                          target - reconstruction, metadata)

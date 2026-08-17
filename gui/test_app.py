@@ -8,10 +8,13 @@ import numpy as np
 from PIL import Image, ImageTk
 from procedural_texture_kernel import (FitConfig, SUPPORTED_COMPONENT_FAMILIES,
                                        TextureFitter, load_image)
+from .spectral_diagnostics_viewer import SpectralDiagnosticsDialog
 
 ATOM_LABELS = {
     "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
-    "perlin_noise": "Perlin noise", "wavelet": "Wavelet",
+    "perlin_noise": "Perlin noise", "thresholded_noise": "Thresholded noise",
+    "masked_noise": "Masked region detail", "wavelet": "Wavelet",
+    "shader_graph": "Shader graph region mix",
     "voronoi_noise": "Voronoi noise", "fbm": "Fractal Brownian motion (fBm)",
     "ridged_multifractal": "Ridged multifractal", "turbulence_noise": "Turbulence noise",
     "domain_warped_noise": "Domain-warped noise",
@@ -32,16 +35,20 @@ class TestApplication(tk.Tk):
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
         self.components = tk.IntVar(value=8); self.iterations = tk.IntVar(value=40)
         self.resolution = tk.IntVar(value=96); self.seed = tk.IntVar(value=0)
+        self.noise_seed_candidates = tk.IntVar(value=2)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
                                 ("Fit resolution", self.resolution),
                                 ("Bands", self.decomposition_bands), ("Seed", self.seed),
+                                ("Noise seeds", self.noise_seed_candidates),
                                 ("Min improvement", self.min_improvement)):
             ttk.Label(controls, text=label).pack(side="left", padx=(8,2))
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
         ttk.Button(controls, text="Load Image", command=self.load).pack(side="left", padx=8)
         self.fit_button = ttk.Button(controls, text="Fit", command=self.fit); self.fit_button.pack(side="left")
+        self.spectrum_button = ttk.Button(controls, text="Spectrum", command=self.show_spectrum)
+        self.spectrum_button.pack(side="left", padx=(8, 0)); self.spectrum_button.state(["disabled"])
         weight_controls = ttk.LabelFrame(self, text="Texture loss weights")
         weight_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.adaptive_weights = tk.BooleanVar(value=True)
@@ -53,18 +60,49 @@ class TestApplication(tk.Tk):
         self.autocorrelation_weight = tk.DoubleVar(value=0.75)
         self.gradient_weight = tk.DoubleVar(value=0.5)
         self.mse_weight = tk.DoubleVar(value=1.0)
+        self.local_structure_weight = tk.DoubleVar(value=0.5)
+        self.local_contrast_weight = tk.DoubleVar(value=0.5)
         self.statistical_weight_entries = []
         for label, variable in (("Spectrum", self.spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
                                 ("Gradient", self.gradient_weight),
-                                ("MSE", self.mse_weight)):
+                                ("MSE", self.mse_weight),
+                                ("Local structure", self.local_structure_weight),
+                                ("Local contrast", self.local_contrast_weight)):
             ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
             entry = ttk.Entry(weight_controls, textvariable=variable, width=8)
             entry.pack(side="left")
-            if variable is not self.mse_weight:
+            if variable not in (self.mse_weight, self.local_structure_weight,
+                                self.local_contrast_weight):
                 self.statistical_weight_entries.append(entry)
         self._update_weight_controls()
+        detail_controls = ttk.LabelFrame(self, text="High-frequency residual refinement")
+        detail_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.detail_refinement = tk.BooleanVar(value=True)
+        self.detail_components = tk.IntVar(value=4)
+        self.detail_min_frequency = tk.DoubleVar(value=6.0)
+        self.detail_hf_threshold = tk.DoubleVar(value=.85)
+        ttk.Checkbutton(detail_controls, text="Enable when HF ratio is below threshold",
+                        variable=self.detail_refinement).pack(side="left", padx=8)
+        for label, variable in (("Detail atoms", self.detail_components),
+                                ("Min frequency", self.detail_min_frequency),
+                                ("HF threshold", self.detail_hf_threshold)):
+            ttk.Label(detail_controls, text=label).pack(side="left", padx=(12, 2))
+            ttk.Entry(detail_controls, textvariable=variable, width=7).pack(side="left")
+        refit_controls = ttk.LabelFrame(self, text="Joint atom amplitude refinement")
+        refit_controls.pack(fill="x", padx=16, pady=(0, 4))
+        self.joint_amplitude_refit = tk.BooleanVar(value=True)
+        self.amplitude_refit_interval = tk.IntVar(value=2)
+        self.band_aware_candidates = tk.BooleanVar(value=True)
+        ttk.Checkbutton(refit_controls, text="Jointly refit amplitudes",
+                        variable=self.joint_amplitude_refit).pack(side="left", padx=8)
+        ttk.Label(refit_controls, text="Every N accepted atoms").pack(
+            side="left", padx=(12, 2))
+        ttk.Entry(refit_controls, textvariable=self.amplitude_refit_interval,
+                  width=7).pack(side="left")
+        ttk.Checkbutton(refit_controls, text="Band-aware atom roles",
+                        variable=self.band_aware_candidates).pack(side="left", padx=12)
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
         atom_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.atom_enabled = {
@@ -133,6 +171,7 @@ class TestApplication(tk.Tk):
         try: self.source = load_image(path)
         except ValueError as exc: messagebox.showerror("Load failed", str(exc)); return
         self.result = None; self.extent.set(1.0); self._show(self.source, 0)
+        self.spectrum_button.state(["disabled"])
         self.extent_value.configure(text="1.0×  ([0, 1)²)")
         self.status.configure(text=f"Loaded {self.source.shape[1]} × {self.source.shape[0]}")
 
@@ -150,6 +189,12 @@ class TestApplication(tk.Tk):
             except Exception as exc: self.events.put(("error", exc))
         threading.Thread(target=worker, daemon=True).start(); self.after(50, self._poll)
 
+    def show_spectrum(self):
+        if self.result is None:
+            return
+        SpectralDiagnosticsDialog(
+            self, self.result.metadata["spectral_diagnostics"])
+
     def _build_config(self) -> FitConfig:
         """Read and validate all editable fitting controls."""
         families = tuple(family for family in SUPPORTED_COMPONENT_FAMILIES
@@ -157,6 +202,7 @@ class TestApplication(tk.Tk):
         if not families:
             raise ValueError("select at least one procedural atom family")
         return FitConfig(seed=self.seed.get(), max_components=self.components.get(),
+                         noise_seed_candidates=self.noise_seed_candidates.get(),
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
                          component_families=families,
@@ -166,7 +212,16 @@ class TestApplication(tk.Tk):
                          histogram_weight=self.histogram_weight.get(),
                          autocorrelation_weight=self.autocorrelation_weight.get(),
                          gradient_weight=self.gradient_weight.get(),
-                         mse_weight=self.mse_weight.get())
+                         mse_weight=self.mse_weight.get(),
+                         local_structure_weight=self.local_structure_weight.get(),
+                         local_contrast_weight=self.local_contrast_weight.get(),
+                         detail_refinement=self.detail_refinement.get(),
+                         detail_max_components=self.detail_components.get(),
+                         detail_min_frequency=self.detail_min_frequency.get(),
+                         detail_hf_ratio_threshold=self.detail_hf_threshold.get(),
+                         joint_amplitude_refit=self.joint_amplitude_refit.get(),
+                         amplitude_refit_interval=self.amplitude_refit_interval.get(),
+                         band_aware_candidates=self.band_aware_candidates.get())
 
     def _poll(self):
         try:
@@ -175,11 +230,15 @@ class TestApplication(tk.Tk):
                 if event[0] == "progress": self.progress["value"] = event[1] * 100; self.status.configure(text=event[2])
                 elif event[0] == "result":
                     result = event[1]; self.result = result
+                    self.spectrum_button.state(["!disabled"])
                     self._update_extent_preview(); self._show(result.residual, 2, True)
                     m = result.metrics
                     objective = result.metadata["objective"]
                     mode = "adaptive per-band" if objective["weight_mode"] == "adaptive_per_band" else "manual"
-                    self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
+                    detail = result.metadata["detail_refinement"]
+                    detail_text = (f"detail +{detail['components']}" if detail["accepted"]
+                                   else f"detail {detail.get('reason', 'not accepted')}")
+                    self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   {detail_text}   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
                     self.running = False; self.fit_button.state(["!disabled"])
                 else:
                     messagebox.showerror("Fit failed", str(event[1])); self.running = False; self.fit_button.state(["!disabled"])
