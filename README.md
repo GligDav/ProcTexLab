@@ -162,6 +162,12 @@ After a fit, the **Spectrum** button opens the full-resolution target/result
 diagnostics: absolute radial PSD curves on a logarithmic scale, per-band absolute
 and normalized energies, and the combined high-frequency energy ratio.
 
+The adjacent **Measurements** button opens complementary full-resolution
+diagnostics. Its tabs compare global contrast and gradient tails, local contrast
+at four Gaussian scales, strong-edge density, and absolute directional Fourier
+energy in eight orientation wedges. All ratios are reported as result divided by
+target so that deficits and excesses are directly visible.
+
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:
 
