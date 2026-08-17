@@ -33,14 +33,14 @@ DEFAULT_DETAIL_COMPONENT_FAMILIES = (
 class FitConfig:
     """Bounded controls for sparse multiscale fitting."""
     seed: int = 0
-    max_components: int = 8
-    max_iterations: int = 40
-    fitting_resolution: int | None = 96
+    max_components: int = 12
+    max_iterations: int = 60
+    fitting_resolution: int | None = 192
     component_families: tuple[str, ...] = SUPPORTED_COMPONENT_FAMILIES
     fft_candidates: int = 24
-    noise_seed_candidates: int = 2
+    noise_seed_candidates: int = 4
     min_frequency: float = 0.5
-    max_frequency: float = 24.0
+    max_frequency: float | None = None
     min_improvement: float = 1e-6
     ridge: float = 1e-8
     fit_plane: bool = True
@@ -52,6 +52,7 @@ class FitConfig:
     mse_weight: float = 1.0
     local_structure_weight: float = 0.0
     local_contrast_weight: float = 0.0
+    absolute_spectrum_weight: float = 0.25
     local_structure_scales: int = 3
     local_structure_orientations: int = 4
     local_structure_block_size: int = 8
@@ -60,8 +61,8 @@ class FitConfig:
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
     detail_refinement: bool = False
-    detail_max_components: int = 4
-    detail_min_frequency: float = 6.0
+    detail_max_components: int = 12
+    detail_min_frequency: float = 12.0
     detail_min_improvement: float = 1e-7
     detail_hf_ratio_threshold: float = 0.85
     detail_base_sigma: float = 1.0
@@ -79,7 +80,10 @@ class FitConfig:
             raise ValueError("noise_seed_candidates must be a positive integer")
         if self.fitting_resolution is not None and self.fitting_resolution < 8:
             raise ValueError("fitting_resolution must be at least 8 or None")
-        if self.min_frequency < 0 or self.max_frequency <= self.min_frequency:
+        if (not math.isfinite(self.min_frequency) or self.min_frequency < 0
+                or (self.max_frequency is not None
+                    and (not math.isfinite(self.max_frequency)
+                         or self.max_frequency <= self.min_frequency))):
             raise ValueError("frequency bounds are invalid")
         if not math.isfinite(self.min_improvement) or self.min_improvement < 0:
             raise ValueError("min_improvement must be a finite, non-negative number")
@@ -90,7 +94,8 @@ class FitConfig:
         if (not math.isfinite(self.detail_min_frequency)
                 or self.detail_min_frequency < 0):
             raise ValueError("detail_min_frequency must be finite and non-negative")
-        if self.detail_refinement and self.detail_min_frequency >= self.max_frequency:
+        if (self.detail_refinement and self.max_frequency is not None
+                and self.detail_min_frequency >= self.max_frequency):
             raise ValueError("detail_min_frequency must be below max_frequency")
         if (not math.isfinite(self.detail_min_improvement)
                 or self.detail_min_improvement < 0):
@@ -111,7 +116,8 @@ class FitConfig:
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
                            self.mse_weight, self.local_structure_weight,
-                           self.local_contrast_weight)
+                           self.local_contrast_weight,
+                           self.absolute_spectrum_weight)
         for value, name in ((self.local_structure_scales, "local_structure_scales"),
                             (self.local_structure_orientations,
                              "local_structure_orientations"),
@@ -130,7 +136,8 @@ class FitConfig:
         return TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                                   self.autocorrelation_weight, self.gradient_weight,
                                   self.mse_weight, self.local_structure_weight,
-                                  self.local_contrast_weight)
+                                  self.local_contrast_weight,
+                                  self.absolute_spectrum_weight)
 
 @dataclass
 class FitResult:

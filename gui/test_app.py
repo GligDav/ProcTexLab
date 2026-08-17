@@ -34,15 +34,17 @@ class TestApplication(tk.Tk):
         self.source = None; self.result = None; self.images = [None, None, None]
         self.events = queue.Queue(); self.running = False; self.extent_job = None
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
-        self.components = tk.IntVar(value=8); self.iterations = tk.IntVar(value=40)
-        self.resolution = tk.IntVar(value=96); self.seed = tk.IntVar(value=0)
-        self.noise_seed_candidates = tk.IntVar(value=2)
+        self.components = tk.IntVar(value=12); self.iterations = tk.IntVar(value=60)
+        self.resolution = tk.IntVar(value=192); self.seed = tk.IntVar(value=0)
+        self.noise_seed_candidates = tk.IntVar(value=4)
+        self.max_frequency = tk.DoubleVar(value=0.0)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
                                 ("Fit resolution", self.resolution),
                                 ("Bands", self.decomposition_bands), ("Seed", self.seed),
                                 ("Noise seeds", self.noise_seed_candidates),
+                                ("Max freq (0=auto)", self.max_frequency),
                                 ("Min improvement", self.min_improvement)):
             ttk.Label(controls, text=label).pack(side="left", padx=(8,2))
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
@@ -67,8 +69,10 @@ class TestApplication(tk.Tk):
         self.mse_weight = tk.DoubleVar(value=1.0)
         self.local_structure_weight = tk.DoubleVar(value=0.5)
         self.local_contrast_weight = tk.DoubleVar(value=0.5)
+        self.absolute_spectrum_weight = tk.DoubleVar(value=0.25)
         self.statistical_weight_entries = []
         for label, variable in (("Spectrum", self.spectrum_weight),
+                                ("Absolute spectrum", self.absolute_spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
                                 ("Gradient", self.gradient_weight),
@@ -78,15 +82,16 @@ class TestApplication(tk.Tk):
             ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
             entry = ttk.Entry(weight_controls, textvariable=variable, width=8)
             entry.pack(side="left")
-            if variable not in (self.mse_weight, self.local_structure_weight,
+            if variable not in (self.mse_weight, self.absolute_spectrum_weight,
+                                self.local_structure_weight,
                                 self.local_contrast_weight):
                 self.statistical_weight_entries.append(entry)
         self._update_weight_controls()
         detail_controls = ttk.LabelFrame(self, text="High-frequency residual refinement")
         detail_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.detail_refinement = tk.BooleanVar(value=True)
-        self.detail_components = tk.IntVar(value=4)
-        self.detail_min_frequency = tk.DoubleVar(value=6.0)
+        self.detail_components = tk.IntVar(value=12)
+        self.detail_min_frequency = tk.DoubleVar(value=12.0)
         self.detail_hf_threshold = tk.DoubleVar(value=.85)
         ttk.Checkbutton(detail_controls, text="Enable when HF ratio is below threshold",
                         variable=self.detail_refinement).pack(side="left", padx=8)
@@ -217,6 +222,8 @@ class TestApplication(tk.Tk):
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
                          component_families=families,
+                         max_frequency=(None if self.max_frequency.get() <= 0
+                                        else self.max_frequency.get()),
                          min_improvement=self.min_improvement.get(),
                          adaptive_texture_weights=self.adaptive_weights.get(),
                          spectrum_weight=self.spectrum_weight.get(),
@@ -226,6 +233,7 @@ class TestApplication(tk.Tk):
                          mse_weight=self.mse_weight.get(),
                          local_structure_weight=self.local_structure_weight.get(),
                          local_contrast_weight=self.local_contrast_weight.get(),
+                         absolute_spectrum_weight=self.absolute_spectrum_weight.get(),
                          detail_refinement=self.detail_refinement.get(),
                          detail_max_components=self.detail_components.get(),
                          detail_min_frequency=self.detail_min_frequency.get(),

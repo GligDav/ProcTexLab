@@ -19,9 +19,9 @@ from procedural_texture_kernel import FitConfig, TextureFitter, load_image
 
 image = load_image("roughness.png")
 result = TextureFitter(FitConfig(
-    max_components=8,
-    max_iterations=40,
-    fitting_resolution=96,
+    max_components=12,
+    max_iterations=60,
+    fitting_resolution=192,
     decomposition_bands=5,
     seed=0,
 )).fit(image)
@@ -62,13 +62,20 @@ objective. Extracted features and effective weights are recorded in each entry o
 `FitResult.metadata["bands"]`. Set `adaptive_texture_weights=False` to apply the
 manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
 `gradient_weight` values to every band. Their defaults remain `1.0`, `0.5`,
-`0.75`, and `0.5`; `mse_weight` defaults to `1.0`. Losses are weighted means.
+`0.75`, and `0.5`; `mse_weight` defaults to `1.0`. The additional absolute
+band-energy spectrum term defaults to `0.25` and prevents normalized spectral
+shape from hiding an overall contrast or high-frequency deficit. Losses are
+weighted means.
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
+`max_frequency=None` selects 45% of the smaller fitting dimension, retaining an
+anti-aliasing margin. An explicit cycle-per-UV value still overrides it. Input
+downsampling applies a Gaussian anti-aliasing filter before resampling.
+
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
-Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 2); at most three noise frequencies are retained per iteration.
+Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration.
 
 `masked_noise` is a deliberately constrained compositional atom: it applies independent detail noise to either side of a coherent mask without introducing a general shader-graph search space. Both mask sides are proposed, while mask shape and detail placement are refined continuously.
 

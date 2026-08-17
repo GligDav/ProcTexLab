@@ -183,7 +183,8 @@ def test_texture_loss_is_statistical_and_reports_components():
     shifted_loss, shifted_parts = evaluator.evaluate(shifted)
     unrelated_loss, _ = evaluator.evaluate(rng.random(reference.shape))
     assert exact == pytest.approx(0.0, abs=1e-14)
-    assert set(shifted_parts) == {"texture_loss", "spectrum_loss", "histogram_loss",
+    assert set(shifted_parts) == {"texture_loss", "spectrum_loss",
+                                  "absolute_spectrum_loss", "histogram_loss",
                                   "autocorrelation_loss", "gradient_loss",
                                   "local_structure_loss", "local_contrast_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
@@ -199,6 +200,19 @@ def test_mse_texture_loss_component_and_weighting():
     total, parts = TextureLoss(reference, TextureLossWeights(0, 0, 0, 0, 1)).evaluate(candidate)
     assert parts["mse_loss"] == pytest.approx(.25)
     assert total == pytest.approx(.25)
+
+
+def test_absolute_spectrum_loss_detects_missing_energy():
+    y, x = np.indices((48, 48))
+    reference = np.sin(2 * np.pi * x / 4)
+    weights = TextureLossWeights(0, 0, 0, 0, 0, 0, 0,
+                                 absolute_spectrum=1)
+    evaluator = TextureLoss(reference, weights)
+    exact, _ = evaluator.evaluate(reference)
+    attenuated, parts = evaluator.evaluate(reference * .5)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert attenuated == pytest.approx(parts["absolute_spectrum_loss"])
+    assert attenuated > 0
 
 def test_local_contrast_loss_detects_region_scale_changes():
     y, x = np.indices((48, 48))
@@ -284,6 +298,14 @@ def test_detail_refinement_configuration_validation(kwargs):
 def test_detail_minimum_frequency_must_fit_enabled_frequency_range():
     with pytest.raises(ValueError, match="detail_min_frequency"):
         FitConfig(detail_refinement=True, detail_min_frequency=24, max_frequency=24)
+
+
+def test_automatic_frequency_limit_is_resolved_from_fit_shape():
+    image = np.zeros((40, 80))
+    result = TextureFitter(FitConfig(max_components=0, fitting_resolution=None)).fit(image)
+    frequency = result.metadata["frequency_range"]
+    assert frequency["maximum_mode"] == "automatic"
+    assert frequency["maximum"] == pytest.approx(18.0)
 
 
 @pytest.mark.parametrize("value", [0, -1, True, 1.5])

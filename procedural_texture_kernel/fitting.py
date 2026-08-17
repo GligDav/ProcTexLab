@@ -61,7 +61,11 @@ def _resize_for_fit(image: np.ndarray, limit: int | None) -> np.ndarray:
         return image
     factor = limit / max(image.shape)
     shape = (max(8, round(image.shape[0] * factor)), max(8, round(image.shape[1] * factor)))
-    return zoom(image, (shape[0] / image.shape[0], shape[1] / image.shape[1]), order=1)
+    # Suppress frequencies that would alias into the smaller fitting raster.
+    sigma = max(.5 / factor, .5)
+    filtered = gaussian_filter(image, sigma=sigma, mode="reflect")
+    return zoom(filtered, (shape[0] / image.shape[0], shape[1] / image.shape[1]),
+                order=1, prefilter=False)
 
 def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float,
                   include_plane: bool | None = None) -> None:
@@ -118,7 +122,9 @@ def _fft_sinusoid_candidates(residual, config, count: int):
     spectrum = np.fft.fft2((residual - residual.mean()) * window)
     fy, fx = np.meshgrid(np.fft.fftfreq(h) * h, np.fft.fftfreq(w) * w, indexing="ij")
     radius = np.hypot(fx, fy)
-    valid = (radius >= config.min_frequency) & (radius <= config.max_frequency)
+    maximum = (config.max_frequency if config.max_frequency is not None
+               else .45 * min(h, w))
+    valid = (radius >= config.min_frequency) & (radius <= maximum)
     power = np.where(valid, np.abs(spectrum), -np.inf)
     order = np.argsort(power.ravel())[::-1]
     seen = set(); candidates = []
@@ -176,10 +182,12 @@ def _adaptive_noise_frequencies(residual, config):
     probes = _fft_sinusoid_candidates(residual, config, 2)
     proposed = [float(np.hypot(atom.frequency_u, atom.frequency_v)) for atom in probes]
     proposed.extend((2.0, 4.0, 8.0, 16.0))
+    maximum = (config.max_frequency if config.max_frequency is not None
+               else .45 * min(residual.shape))
     frequencies = []
     for value in proposed:
-        value = float(np.clip(value, config.min_frequency, config.max_frequency))
-        if config.min_frequency <= value <= config.max_frequency and all(
+        value = float(np.clip(value, config.min_frequency, maximum))
+        if config.min_frequency <= value <= maximum and all(
                 abs(value-existing) > .25 for existing in frequencies):
             frequencies.append(value)
         if len(frequencies) == 3:
@@ -247,6 +255,8 @@ def _local_candidates(residual, config, dominant_frequency: float):
 
 def _perlin_candidates(residual, config, u, v):
     frequencies = _adaptive_noise_frequencies(residual, config)
+    maximum = (config.max_frequency if config.max_frequency is not None
+               else .45 * min(residual.shape))
     seeds = tuple(config.seed + index for index in range(config.noise_seed_candidates))
     families = {"perlin_noise": PerlinNoiseComponent,
                 "fbm": FractalBrownianMotionComponent,
@@ -281,7 +291,7 @@ def _perlin_candidates(residual, config, u, v):
         for mask_frequency in frequencies:
             detail_frequency = float(np.clip(
                 max(mask_frequency * 2.0, frequencies[0]),
-                config.min_frequency, config.max_frequency))
+                config.min_frequency, maximum))
             for seed in seeds:
                 mask_source = ThresholdedNoiseComponent(
                     frequency=mask_frequency, seed=seed)
@@ -297,7 +307,7 @@ def _perlin_candidates(residual, config, u, v):
         for mask_frequency in frequencies:
             detail_frequency = float(np.clip(
                 max(mask_frequency * 2.0, frequencies[0]),
-                config.min_frequency, config.max_frequency))
+                config.min_frequency, maximum))
             for seed in seeds:
                 mask_source = PerlinNoiseComponent(
                     frequency=mask_frequency, octaves=4, seed=seed)
@@ -310,7 +320,7 @@ def _perlin_candidates(residual, config, u, v):
                     ShaderNode("detail_a", "component", component=PerlinNoiseComponent(
                         frequency=detail_frequency, octaves=3, seed=seed+1009)),
                     ShaderNode("detail_b", "component", component=PerlinNoiseComponent(
-                        frequency=min(config.max_frequency, detail_frequency*1.5),
+                        frequency=min(maximum, detail_frequency*1.5),
                         octaves=3, seed=seed+2017)),
                     ShaderNode("result", "mix", ("detail_a", "detail_b", "mask")),
                 ], "result")
@@ -330,8 +340,10 @@ def _perlin_basis_for_threshold(atom: ThresholdedNoiseComponent, u, v):
         offset_u=atom.offset_u, offset_v=atom.offset_v,
         seed=atom.seed).basis(ru, rv)
 
-def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
+def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
+                     max_frequency: float = 32.0):
     """Refine one atom against the translation-tolerant composite texture loss."""
+    frequency_upper = max(float(max_frequency), .25)
     if isinstance(atom, SinusoidComponent):
         x0 = [atom.amplitude, atom.frequency_u, atom.frequency_v, atom.phase]
         bound = max(1.0, np.hypot(atom.frequency_u, atom.frequency_v) * .35)
@@ -351,7 +363,7 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     elif isinstance(atom, ThresholdedNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.rotation, atom.threshold, atom.edge_width]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1),
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (-np.pi, np.pi), (-1, 1), (.005, .5)]
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
@@ -361,8 +373,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
               atom.mask_offset_v, atom.mask_rotation, atom.mask_threshold,
               atom.mask_edge_width, atom.detail_frequency,
               atom.detail_offset_u, atom.detail_offset_v]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (-np.pi, np.pi),
-                  (-1, 1), (.005, .5), (.25, 32), (-1, 1), (-1, 1)]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (-np.pi, np.pi),
+                  (-1, 1), (.005, .5), (.25, frequency_upper), (-1, 1), (-1, 1)]
         def make(p): return replace(
             atom, amplitude=p[0], mask_frequency=p[1], mask_offset_u=p[2],
             mask_offset_v=p[3], mask_rotation=p[4], mask_threshold=p[5],
@@ -371,7 +384,7 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     elif isinstance(atom, RidgedMultifractalComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1),
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4)]
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
@@ -379,31 +392,33 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
     elif isinstance(atom, DomainWarpedNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.warp_amplitude, atom.warp_frequency]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (0, .75), (.25, 16)]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (0, .75), (.25, min(16.0, frequency_upper))]
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
             warp_amplitude=p[4], warp_frequency=p[5])
     elif isinstance(atom, (FractalBrownianMotionComponent, TurbulenceNoiseComponent)):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.persistence, atom.lacunarity]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (.1, .9), (1.25, 4)]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (.1, .9), (1.25, 4)]
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
             persistence=p[4], lacunarity=p[5])
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1)]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1)]
         def make(p): return replace(atom, amplitude=p[0], frequency=p[1],
                                     offset_u=p[2], offset_v=p[3])
     elif isinstance(atom, GaborComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
               atom.frequency, atom.orientation, atom.phase]
         bounds = [(-2, 2), (0, 1), (0, 1), (.02, .5), (.02, .5),
-                  (.25, 32), (-np.pi, np.pi), (-np.pi, np.pi)]
+                  (.25, frequency_upper), (-np.pi, np.pi), (-np.pi, np.pi)]
         def make(p): return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
     elif isinstance(atom, VoronoiNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.jitter, atom.offset_u, atom.offset_v]
-        bounds = [(-2, 2), (.25, 32), (0, 1.5), (-1, 1), (-1, 1)]
+        bounds = [(-2, 2), (.25, frequency_upper), (0, 1.5), (-1, 1), (-1, 1)]
         def make(p): return replace(
             atom, amplitude=p[0], frequency=p[1], jitter=p[2],
             offset_u=p[3], offset_v=p[4])
@@ -453,8 +468,10 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int):
               mask_source.offset_v, threshold, edge_width,
               detail_a.frequency, detail_a.offset_u, detail_a.offset_v,
               detail_b.frequency, detail_b.offset_u, detail_b.offset_v]
-        bounds = [(-2, 2), (.25, 32), (-1, 1), (-1, 1), (-1, 1), (.005, .5),
-                  (.25, 32), (-1, 1), (-1, 1), (.25, 32), (-1, 1), (-1, 1)]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (-1, 1), (.005, .5),
+                  (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (.25, frequency_upper), (-1, 1), (-1, 1)]
         def make(p):
             mask = replace(mask_source, frequency=p[1], offset_u=p[2], offset_v=p[3])
             first = replace(detail_a, frequency=p[6], offset_u=p[7], offset_v=p[8])
@@ -495,7 +512,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         weights = TextureLossWeights(estimated.spectrum, estimated.histogram,
                                      estimated.autocorrelation, estimated.gradient,
                                      config.mse_weight, config.local_structure_weight,
-                                     config.local_contrast_weight)
+                                     config.local_contrast_weight,
+                                     config.absolute_spectrum_weight)
     loss = TextureLoss(target, weights,
                        config.local_structure_scales,
                        config.local_structure_orientations,
@@ -548,7 +566,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             scored.append((before - candidate_loss, score, atom))
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
-        chosen = _refine_new_atom(chosen, current, loss, u, v, config.max_iterations)
+        chosen = _refine_new_atom(chosen, current, loss, u, v,
+                                  config.max_iterations, config.max_frequency)
         after, parts = loss.evaluate(current + chosen.evaluate(u, v))
         if before - after <= config.min_improvement:
             break
@@ -585,8 +604,9 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                "autocorrelation": weights.autocorrelation,
                                "gradient": weights.gradient,
                                 "mse": weights.mse,
-                                "local_structure": weights.local_structure,
-                                "local_contrast": weights.local_contrast}}
+                               "local_structure": weights.local_structure,
+                               "local_contrast": weights.local_contrast,
+                               "absolute_spectrum": weights.absolute_spectrum}}
     if analysis is not None:
         result["features"] = analysis.features.to_dict()
     return model, result
@@ -637,7 +657,8 @@ def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
         residual, config.detail_base_sigma, mode="reflect")
     detail_config = replace(
         config, max_components=config.detail_max_components,
-        min_frequency=max(config.min_frequency, config.detail_min_frequency),
+        min_frequency=min(max(config.min_frequency, config.detail_min_frequency),
+                          config.max_frequency * .75),
         min_improvement=config.detail_min_improvement,
         component_families=families, fit_plane=False,
         adaptive_texture_weights=False, spectrum_weight=.25,
@@ -683,6 +704,12 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
     """Decompose the target, fit every band independently, then add the models."""
     started = time.perf_counter(); fit_target = _resize_for_fit(target, config.fitting_resolution)
     h, w = fit_target.shape
+    automatic_frequency = config.max_frequency is None
+    if automatic_frequency:
+        # Preserve an anti-aliasing margin while allowing substantially more
+        # detail than the former fixed 24-cycle ceiling.
+        auto_max_frequency = max(config.min_frequency + .25, .45 * min(h, w))
+        config = replace(config, max_frequency=auto_max_frequency)
     decomposition = create_decomposition(config.decomposition_method,
                                          config.decomposition_bands,
                                          config.decomposition_base_sigma)
@@ -711,6 +738,10 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "iterations": history, "elapsed_seconds": time.perf_counter() - started,
                    "seed": config.seed,
                    "noise_seed_candidates": config.noise_seed_candidates,
+                   "frequency_range": {"minimum": config.min_frequency,
+                                       "maximum": config.max_frequency,
+                                       "maximum_mode": ("automatic" if
+                                           automatic_frequency else "explicit")},
                    "decomposition": {"method": config.decomposition_method,
                                      "bands": config.decomposition_bands,
                                      "base_sigma": config.decomposition_base_sigma,
@@ -724,6 +755,8 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                     config.adaptive_texture_weights else "manual"),
                                  "band_aware_candidates": config.band_aware_candidates,
                                  "mse_weight": config.mse_weight,
+                                 "absolute_spectrum_weight":
+                                     config.absolute_spectrum_weight,
                                  "local_contrast_weight": config.local_contrast_weight,
                                  "local_structure": {
                                      "weight": config.local_structure_weight,
