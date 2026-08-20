@@ -248,6 +248,20 @@ def test_texture_loss_is_statistical_and_reports_components():
     assert shifted_loss < unrelated_loss
     assert shifted_loss < np.mean((reference - shifted) ** 2)
 
+
+@pytest.mark.parametrize("weights", [
+    TextureLossWeights(0, 0, 0, 0, 1),
+    TextureLossWeights(1, .5, .75, .5, 1, 0, 0, .25, .25),
+    TextureLossWeights(0, 0, 0, 0, 0, 1, 1),
+])
+def test_weighted_only_texture_loss_matches_full_evaluation(weights):
+    rng = np.random.default_rng(123)
+    reference = rng.normal(size=(24, 20))
+    candidate = rng.normal(size=(24, 20))
+    loss = TextureLoss(reference, weights)
+    full, _ = loss.evaluate(candidate)
+    assert loss.evaluate_total(candidate) == pytest.approx(full, abs=1e-15)
+
 def test_texture_loss_weight_validation():
     with pytest.raises(ValueError, match="weight"):
         TextureLossWeights(0, 0, 0, 0, 0)

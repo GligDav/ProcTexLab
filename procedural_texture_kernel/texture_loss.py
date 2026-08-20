@@ -303,25 +303,81 @@ class TextureLoss:
 
     def evaluate(self, candidate: np.ndarray) -> tuple[float, dict[str, float]]:
         parts = self.components(candidate)
-        weighted = (self.weights.spectrum * parts["spectrum_loss"]
+        total = self._weighted_total(parts)
+        return total, {"texture_loss": total, **parts}
+
+    def _weighted_total(self, parts: dict[str, float]) -> float:
+        weighted = (self.weights.spectrum * parts.get("spectrum_loss", 0.0)
                     + self.weights.absolute_spectrum
-                    * parts["absolute_spectrum_loss"]
+                    * parts.get("absolute_spectrum_loss", 0.0)
                     + self.weights.oriented_spectrum
-                    * parts["oriented_spectrum_loss"]
-                    + self.weights.histogram * parts["histogram_loss"]
-                    + self.weights.autocorrelation * parts["autocorrelation_loss"]
-                    + self.weights.gradient * parts["gradient_loss"]
-                    + self.weights.mse * parts["mse_loss"]
-                    + self.weights.local_structure * parts["local_structure_loss"]
-                    + self.weights.local_contrast * parts["local_contrast_loss"])
+                    * parts.get("oriented_spectrum_loss", 0.0)
+                    + self.weights.histogram * parts.get("histogram_loss", 0.0)
+                    + self.weights.autocorrelation
+                    * parts.get("autocorrelation_loss", 0.0)
+                    + self.weights.gradient * parts.get("gradient_loss", 0.0)
+                    + self.weights.mse * parts.get("mse_loss", 0.0)
+                    + self.weights.local_structure
+                    * parts.get("local_structure_loss", 0.0)
+                    + self.weights.local_contrast
+                    * parts.get("local_contrast_loss", 0.0))
         total_denominator = (self.weights.spectrum + self.weights.histogram
                              + self.weights.autocorrelation + self.weights.gradient
                              + self.weights.mse + self.weights.local_structure
                              + self.weights.local_contrast
                              + self.weights.absolute_spectrum)
         total_denominator += self.weights.oriented_spectrum
-        total = float(weighted / total_denominator)
-        return total, {"texture_loss": total, **parts}
+        return float(weighted / total_denominator)
+
+    def evaluate_total(self, candidate: np.ndarray) -> float:
+        """Evaluate only enabled terms for optimizer and candidate inner loops.
+
+        ``evaluate`` intentionally continues to calculate every diagnostic loss
+        for the public API.  Fitting only needs the weighted scalar for most
+        probes, so skipping zero-weight features avoids unnecessary FFTs and
+        Gaussian filters without changing the objective.
+        """
+        image = np.asarray(candidate, dtype=np.float64)
+        if image.shape != self.reference.shape or not np.all(np.isfinite(image)):
+            raise ValueError("candidate must be finite and match the reference shape")
+        parts: dict[str, float] = {}
+        if self.weights.spectrum:
+            spectra = _spectrum_features(image)
+            parts["spectrum_loss"] = float(np.mean([
+                np.mean((a - b) ** 2) for a, b in zip(self._spectrum, spectra)]))
+        if self.weights.absolute_spectrum:
+            energy = _absolute_spectrum_energy(image)
+            ratio = np.log10((energy + self._absolute_spectrum_epsilon)
+                             / (self._absolute_spectrum
+                                + self._absolute_spectrum_epsilon)) / 8.0
+            parts["absolute_spectrum_loss"] = float(np.mean(ratio * ratio))
+        if self.weights.oriented_spectrum:
+            energy = _oriented_spectrum_energy(image)
+            ratio = np.log10((energy + self._oriented_spectrum_epsilon)
+                             / (self._oriented_spectrum
+                                + self._oriented_spectrum_epsilon)) / 8.0
+            parts["oriented_spectrum_loss"] = float(np.mean(ratio * ratio))
+        if self.weights.histogram:
+            parts["histogram_loss"] = float(np.mean(np.abs(
+                self._histogram - _histogram_feature(image, self._histogram_range))))
+        if self.weights.autocorrelation:
+            parts["autocorrelation_loss"] = float(np.mean((
+                self._autocorrelation - _autocorrelation_feature(image)) ** 2))
+        if self.weights.gradient:
+            feature, _ = _gradient_feature(image, self._gradient_normalizers)
+            parts["gradient_loss"] = float(np.mean(np.abs(self._gradient - feature)))
+        if self.weights.local_structure:
+            feature = _local_structure_feature(image, *self._local_structure_settings)
+            parts["local_structure_loss"] = float(np.mean(
+                (self._local_structure - feature) ** 2))
+        if self.weights.local_contrast:
+            feature, _ = _local_contrast_feature(image, self._contrast_normalizers)
+            parts["local_contrast_loss"] = float(np.mean(np.abs(
+                self._local_contrast - feature)))
+        if self.weights.mse:
+            parts["mse_loss"] = float(np.mean((self.reference - image) ** 2))
+        # Missing terms have zero weights and therefore cannot affect the sum.
+        return self._weighted_total(parts)
 
 def calculate_texture_loss(reference, candidate, weights: TextureLossWeights | None = None,
                            **settings) -> dict[str, float]:

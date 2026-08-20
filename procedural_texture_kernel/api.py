@@ -67,6 +67,7 @@ class FitConfig:
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
     band_workers: int = 1
+    candidate_workers: int = 1
     detail_refinement: bool = False
     detail_max_components: int = 12
     detail_min_frequency: float = 12.0
@@ -107,6 +108,10 @@ class FitConfig:
                 or not isinstance(self.band_workers, int)
                 or self.band_workers < 1):
             raise ValueError("band_workers must be a positive integer")
+        if (isinstance(self.candidate_workers, bool)
+                or not isinstance(self.candidate_workers, int)
+                or self.candidate_workers < 1):
+            raise ValueError("candidate_workers must be a positive integer")
         if self.detail_max_components < 0:
             raise ValueError("detail_max_components must be non-negative")
         if (not math.isfinite(self.detail_min_frequency)

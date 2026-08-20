@@ -2,6 +2,7 @@
 from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import replace
 from threading import Lock
 from typing import TYPE_CHECKING
@@ -648,7 +649,7 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
         # These families have discrete modes or heterogeneous parameterizations;
         # projection already gives their exact least-squares amplitude.
         return atom
-    def objective(p): return target_loss.evaluate(current + make(p).evaluate(u, v))[0]
+    def objective(p): return target_loss.evaluate_total(current + make(p).evaluate(u, v))
     initial_loss = objective(x0)
     result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
                       options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})
@@ -701,12 +702,17 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                        config.local_structure_orientations,
                        config.local_structure_block_size)
     history = []
-    for iteration in range(config.max_components):
+    candidate_pool = (ThreadPoolExecutor(
+        max_workers=config.candidate_workers,
+        thread_name_prefix=f"texture-candidate-{band_index + 1}")
+        if config.candidate_workers > 1 else nullcontext(None))
+    with candidate_pool as candidate_executor:
+      for iteration in range(config.max_components):
         if cancel_callback is not None and cancel_callback():
             raise RuntimeError("fitting cancelled")
         current = model.evaluate_grid(u, v)
         residual = target - current
-        before, _ = loss.evaluate(current)
+        before = loss.evaluate_total(current)
         candidates = []
         if "spectral_noise" in active_families:
             spectral_candidate = _spectral_noise_candidate(
@@ -734,23 +740,28 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                           frequency_probes[0].frequency_v))
         candidates.extend(_local_candidates(residual, candidate_config, dominant))
         if not candidates: break
-        initialized = []
-        for atom in candidates:
+        def initialize(atom):
             if isinstance(atom, SinusoidComponent):
                 score = float(np.mean((atom.amplitude * atom.basis(u, v))**2))
             else:
                 atom.amplitude, score = _project(atom, residual, u, v)
-            initialized.append((score, atom))
+            return score, atom
+        initialized = (list(candidate_executor.map(initialize, candidates))
+                       if candidate_executor is not None else
+                       [initialize(atom) for atom in candidates])
         if weights.local_structure > 0:
             initialized = _diverse_candidate_shortlist(
                 initialized, config.local_structure_candidate_limit)
-        scored = []
-        for score, atom in initialized:
+        def score_candidate(item):
+            score, atom = item
             # Pixel correlation initializes and, for the expensive local
             # structure objective, shortlists atoms. Final selection still uses
             # the complete texture objective.
-            candidate_loss, _ = loss.evaluate(current + atom.evaluate(u, v))
-            scored.append((before - candidate_loss, score, atom))
+            candidate_loss = loss.evaluate_total(current + atom.evaluate(u, v))
+            return before - candidate_loss, score, atom
+        scored = (list(candidate_executor.map(score_candidate, initialized))
+                  if candidate_executor is not None else
+                  [score_candidate(item) for item in initialized])
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
         chosen = _refine_new_atom(chosen, current, loss, u, v,
@@ -792,6 +803,7 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
     result = {"band": band_index + 1, "components": len(model.components),
                    "candidate_families": list(active_families),
+                   "candidate_workers": config.candidate_workers,
                    "iterations": history, "final_loss": final_loss,
                    "final_amplitude_refit": final_refit,
                    "parameter_refinement": parameter_refinement,
@@ -983,6 +995,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "seed": config.seed,
                    "noise_seed_candidates": config.noise_seed_candidates,
                    "band_workers": effective_workers,
+                   "candidate_workers": config.candidate_workers,
                    "frequency_range": {"minimum": config.min_frequency,
                                        "maximum": config.max_frequency,
                                        "maximum_mode": ("automatic" if

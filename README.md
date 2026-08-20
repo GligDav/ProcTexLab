@@ -84,6 +84,20 @@ progress is aggregated across bands. Values above the band count are harmlessly
 capped. Because numerical libraries may also use internal threads, increasing
 the setting beyond the available physical cores can reduce performance.
 
+Candidate projection and scoring within each band can also run concurrently with
+`candidate_workers`. It defaults to one so existing callers keep conservative
+CPU and memory use; use a value such as 2–4 when fitting one or a few bands with
+large candidate sets. Candidate results are consumed in their original order,
+so worker scheduling does not change tie-breaking or the fitted model. Running
+both levels multiplies concurrency (`band_workers * candidate_workers`), and each
+worker holds temporary fitting-resolution arrays. Keep that product near the
+available physical core count and reduce either setting if NumPy/SciPy is already
+configured to use several native threads.
+
+The optimizer avoids calculating zero-weight texture features during inner
+probes. Full loss components are still calculated at recorded iterations and by
+`calculate_texture_loss`, so public diagnostics and fit decisions are unchanged.
+
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
 Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration. The `spectral_noise` candidate packs the strongest unique residual FFT modes into one atom; `spectral_noise_modes` controls its bounded mode count (default 32).

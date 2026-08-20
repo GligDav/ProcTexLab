@@ -101,6 +101,12 @@ def test_band_worker_validation(value):
         FitConfig(band_workers=value)
 
 
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_candidate_worker_validation(value):
+    with pytest.raises(ValueError, match="candidate_workers"):
+        FitConfig(candidate_workers=value)
+
+
 def test_parallel_band_fit_preserves_order_results_and_monotonic_progress():
     y, x = np.indices((20, 24))
     image = .5 + .15 * np.sin(2 * np.pi * x / 6)
@@ -117,6 +123,20 @@ def test_parallel_band_fit_preserves_order_results_and_monotonic_progress():
     assert parallel.metadata["band_workers"] == 2
     band_progress = progress[:progress.index(1.0) + 1]
     assert band_progress == sorted(band_progress)
+
+
+def test_parallel_candidate_scoring_preserves_fit_result():
+    y, x = np.indices((24, 28))
+    image = .45 + .12 * np.sin(2 * np.pi * x / 7) + .08 * np.cos(2 * np.pi * y / 6)
+    common = dict(decomposition_bands=1, max_components=2,
+                  max_iterations=5, fitting_resolution=None,
+                  component_families=("sinusoid", "gabor", "wavelet"),
+                  joint_parameter_refinement=False)
+    sequential = TextureFitter(FitConfig(**common, candidate_workers=1)).fit(image)
+    parallel = TextureFitter(FitConfig(**common, candidate_workers=3)).fit(image)
+    assert np.allclose(parallel.reconstruction, sequential.reconstruction)
+    assert parallel.model.to_dict() == sequential.model.to_dict()
+    assert parallel.metadata["bands"][0]["candidate_workers"] == 3
 
 
 def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
