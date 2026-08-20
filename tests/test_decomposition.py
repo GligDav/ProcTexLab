@@ -30,6 +30,7 @@ def test_band_aware_candidate_roles_follow_pyramid_order():
     assert "wavelet" in middle and "thresholded_noise" in middle
     assert "thresholded_noise" in low and "wavelet" not in low
     assert "warped_ridged_multifractal" in low
+    assert "warped_ridge_detail" in low
 
 
 def test_band_roles_preserve_single_explicit_family_and_can_be_disabled():

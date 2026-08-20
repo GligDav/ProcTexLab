@@ -15,7 +15,8 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent, WarpedRidgedMultifractalComponent, WaveletComponent,
+    VoronoiNoiseComponent, WarpedRidgeDetailComponent,
+    WarpedRidgedMultifractalComponent, WaveletComponent,
     SimpleConstantComponent)
 from .coordinates import coordinate_grid
 from .decomposition import create_decomposition
@@ -35,6 +36,7 @@ _DETAIL_FAMILIES = frozenset({
 _STRUCTURE_FAMILIES = frozenset({
     "thresholded_noise", "domain_warped_noise", "ridged_multifractal",
     "warped_ridged_multifractal",
+    "warped_ridge_detail",
     "masked_noise",
     "shader_graph",
     "voronoi_noise", "fbm", "anisotropic_gaussian", "gaussian_rbf",
@@ -335,6 +337,32 @@ def _perlin_candidates(residual, config, u, v):
             for frequency in frequencies for seed in seeds
             for rotation in (0.0, np.pi / 4.0)
         )
+    if "warped_ridge_detail" in config.component_families:
+        coverage = float(np.clip(np.mean(residual > 0), .15, .85))
+        mask_frequencies = frequencies[:2]
+        for ridge_frequency in mask_frequencies:
+            detail_frequency = float(np.clip(
+                max(ridge_frequency * 3.0, frequencies[-1]),
+                config.min_frequency, maximum))
+            for seed in seeds:
+                for rotation in (0.0, np.pi / 4.0):
+                    ridge_source = WarpedRidgedMultifractalComponent(
+                        frequency=ridge_frequency, ridge_power=3.0,
+                        rotation=rotation, anisotropy=1.5,
+                        warp_amplitude=.18,
+                        warp_frequency=max(1.0, ridge_frequency / 3.0),
+                        seed=seed)
+                    threshold = float(np.quantile(
+                        ridge_source.basis(u, v), 1.0 - coverage))
+                    candidates.extend(WarpedRidgeDetailComponent(
+                        ridge_frequency=ridge_frequency,
+                        ridge_rotation=rotation, ridge_anisotropy=1.5,
+                        warp_amplitude=.18,
+                        warp_frequency=max(1.0, ridge_frequency / 3.0),
+                        mask_threshold=threshold, mask_seed=seed,
+                        detail_frequency=detail_frequency,
+                        detail_seed=seed + 1009, invert_mask=invert)
+                        for invert in (False, True))
     if "thresholded_noise" in config.component_families:
         positive_coverage = float(np.mean(residual > 0))
         coverages = tuple(np.unique(np.clip((positive_coverage, .35, .65), .05, .95)))
@@ -441,6 +469,25 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
             mask_offset_v=p[3], mask_rotation=p[4], mask_threshold=p[5],
             mask_edge_width=p[6], detail_frequency=p[7],
             detail_offset_u=p[8], detail_offset_v=p[9])
+    elif isinstance(atom, WarpedRidgeDetailComponent):
+        x0 = [atom.amplitude, atom.ridge_frequency, atom.ridge_offset_u,
+              atom.ridge_offset_v, atom.ridge_power, atom.ridge_rotation,
+              atom.ridge_anisotropy, atom.warp_amplitude,
+              atom.warp_frequency, atom.mask_threshold,
+              atom.mask_edge_width, atom.detail_frequency,
+              atom.detail_offset_u, atom.detail_offset_v]
+        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                  (.25, 8), (-np.pi, np.pi), (.25, 4), (0, .75),
+                  (.25, min(16.0, frequency_upper)), (-1, 1), (.005, .5),
+                  (.25, frequency_upper), (-1, 1), (-1, 1)]
+        def make(p): return replace(
+            atom, amplitude=p[0], ridge_frequency=p[1],
+            ridge_offset_u=p[2], ridge_offset_v=p[3], ridge_power=p[4],
+            ridge_rotation=p[5], ridge_anisotropy=p[6],
+            warp_amplitude=p[7], warp_frequency=p[8],
+            mask_threshold=p[9], mask_edge_width=p[10],
+            detail_frequency=p[11], detail_offset_u=p[12],
+            detail_offset_v=p[13])
     elif isinstance(atom, RidgedMultifractalComponent):
         if isinstance(atom, WarpedRidgedMultifractalComponent):
             x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,

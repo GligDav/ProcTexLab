@@ -10,7 +10,8 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     FractalBrownianMotionComponent, LineComponent, MaskedNoiseComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent, WarpedRidgedMultifractalComponent,
+    VoronoiNoiseComponent, WarpedRidgeDetailComponent,
+    WarpedRidgedMultifractalComponent,
     SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
@@ -72,6 +73,7 @@ def test_new_component_serialization(component):
     RidgedMultifractalComponent(seed=3), TurbulenceNoiseComponent(seed=3),
     DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
     WarpedRidgedMultifractalComponent(seed=3),
+    WarpedRidgeDetailComponent(mask_seed=3, detail_seed=9),
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
     BinaryPrimitiveComponent(), SimpleConstantComponent(), ThresholdedNoiseComponent(seed=3),
@@ -123,6 +125,19 @@ def test_masked_noise_complement_partitions_the_same_detail_field():
     u, v = coordinate_grid(40, 32)
     normal = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=False)
     inverse = MaskedNoiseComponent(mask_seed=3, detail_seed=9, invert_mask=True)
+    detail = PerlinNoiseComponent(
+        frequency=normal.detail_frequency, octaves=normal.detail_octaves,
+        seed=normal.detail_seed).basis(u, v)
+    assert np.allclose(normal.basis(u, v) + inverse.basis(u, v), detail)
+    assert not np.allclose(normal.basis(u, v), inverse.basis(u, v))
+
+
+def test_warped_ridge_detail_complements_share_the_same_detail():
+    u, v = coordinate_grid(40, 32)
+    settings = dict(mask_seed=3, detail_seed=9, ridge_rotation=.4,
+                    ridge_anisotropy=2.0, warp_amplitude=.2)
+    normal = WarpedRidgeDetailComponent(**settings, invert_mask=False)
+    inverse = WarpedRidgeDetailComponent(**settings, invert_mask=True)
     detail = PerlinNoiseComponent(
         frequency=normal.detail_frequency, octaves=normal.detail_octaves,
         seed=normal.detail_seed).basis(u, v)
@@ -421,6 +436,18 @@ def test_masked_noise_candidates_cover_both_regions():
     assert candidates
     assert {atom.invert_mask for atom in candidates} == {False, True}
     assert all(isinstance(atom, MaskedNoiseComponent) for atom in candidates)
+
+
+def test_warped_ridge_detail_candidates_cover_both_regions():
+    residual = np.random.default_rng(4).normal(size=(20, 24))
+    u, v = coordinate_grid(24, 20)
+    config = FitConfig(component_families=("warped_ridge_detail",),
+                       noise_seed_candidates=1)
+    candidates = _perlin_candidates(residual, config, u, v)
+    assert candidates
+    assert {atom.invert_mask for atom in candidates} == {False, True}
+    assert all(isinstance(atom, WarpedRidgeDetailComponent)
+               for atom in candidates)
 
 def test_gui_has_labels_for_every_component_family():
     from gui.test_app import ATOM_LABELS

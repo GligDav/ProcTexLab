@@ -301,6 +301,50 @@ class WarpedRidgedMultifractalComponent(RidgedMultifractalComponent):
         return super().basis(u + self.warp_amplitude * wu,
                              v + self.warp_amplitude * wv)
 
+
+@dataclass
+class WarpedRidgeDetailComponent(ProceduralComponent):
+    """Fine noise conditioned by a smooth, domain-warped ridge mask."""
+    ridge_frequency: float = 2.0
+    ridge_octaves: int = 5
+    ridge_offset_u: float = 0.0
+    ridge_offset_v: float = 0.0
+    ridge_power: float = 3.0
+    ridge_rotation: float = 0.0
+    ridge_anisotropy: float = 1.5
+    warp_amplitude: float = 0.15
+    warp_frequency: float = 2.0
+    mask_threshold: float = 0.0
+    mask_edge_width: float = 0.08
+    mask_seed: int = 0
+    detail_frequency: float = 12.0
+    detail_octaves: int = 3
+    detail_offset_u: float = 0.0
+    detail_offset_v: float = 0.0
+    detail_seed: int = 1009
+    invert_mask: bool = False
+    type_name: ClassVar[str] = "warped_ridge_detail"
+
+    def basis(self, u, v):
+        ridge = WarpedRidgedMultifractalComponent(
+            frequency=self.ridge_frequency, octaves=self.ridge_octaves,
+            offset_u=self.ridge_offset_u, offset_v=self.ridge_offset_v,
+            ridge_power=self.ridge_power, rotation=self.ridge_rotation,
+            anisotropy=self.ridge_anisotropy,
+            warp_amplitude=self.warp_amplitude,
+            warp_frequency=self.warp_frequency,
+            seed=self.mask_seed).basis(u, v)
+        width = max(float(self.mask_edge_width), 1e-12)
+        t = np.clip((ridge - (self.mask_threshold - width))
+                    / (2.0 * width), 0.0, 1.0)
+        mask = t * t * (3.0 - 2.0 * t)
+        if self.invert_mask:
+            mask = 1.0 - mask
+        detail = _perlin_basis(
+            u, v, self.detail_frequency, self.detail_octaves, .5, 2.0,
+            self.detail_offset_u, self.detail_offset_v, self.detail_seed)
+        return mask * detail
+
 def _rotated(u, v, center_u, center_v, orientation):
     du, dv = u - center_u, v - center_v
     c, s = np.cos(orientation), np.sin(orientation)
@@ -455,6 +499,7 @@ COMPONENT_TYPES = {c.type_name: c for c in (
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
     WarpedRidgedMultifractalComponent,
+    WarpedRidgeDetailComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,
     DifferenceOfGaussiansComponent, PolynomialTrendComponent, RadialWaveComponent,
     SpiralWaveComponent, SparseImpulseComponent, BinaryPrimitiveComponent, SimpleConstantComponent,
