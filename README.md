@@ -67,6 +67,10 @@ band-energy spectrum term defaults to `0.25` and prevents normalized spectral
 shape from hiding an overall contrast or high-frequency deficit. Losses are
 weighted means.
 
+An orientation-aware absolute spectrum term also defaults to `0.25`. It splits
+each radial band into eight unoriented Fourier wedges, so matching radial energy
+with the wrong dominant direction is penalized.
+
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
 `max_frequency=None` selects 45% of the smaller fitting dimension, retaining an
@@ -98,6 +102,12 @@ all linear atom amplitudes, bias, and plane coefficients together. The refit run
 after every `amplitude_refit_interval` accepted atoms and once at the end when
 needed. A refitted state is retained only if the complete band texture objective
 does not increase. Each decision is recorded in the band iteration metadata.
+
+With `joint_parameter_refinement=True`, the final atoms in each band are revisited
+by coordinate-descent nonlinear optimization after greedy construction. The
+default performs one pass over the eight most recently accepted atoms; configure
+`parameter_refinement_passes` and `parameter_refinement_atom_limit` to trade fit
+quality for runtime. Every pass and accepted replacement is recorded per band.
 
 The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
 

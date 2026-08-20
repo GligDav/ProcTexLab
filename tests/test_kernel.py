@@ -15,7 +15,7 @@ from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_gr
 from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.fitting import (
     _adaptive_noise_frequencies, _local_structure_estimate,
-    _perlin_candidates, _refine_new_atom)
+    _perlin_candidates, _refine_model_parameters, _refine_new_atom)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
@@ -185,6 +185,7 @@ def test_texture_loss_is_statistical_and_reports_components():
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert set(shifted_parts) == {"texture_loss", "spectrum_loss",
                                   "absolute_spectrum_loss", "histogram_loss",
+                                  "oriented_spectrum_loss",
                                   "autocorrelation_loss", "gradient_loss",
                                   "local_structure_loss", "local_contrast_loss", "mse_loss"}
     assert shifted_loss < unrelated_loss
@@ -213,6 +214,20 @@ def test_absolute_spectrum_loss_detects_missing_energy():
     assert exact == pytest.approx(0.0, abs=1e-14)
     assert attenuated == pytest.approx(parts["absolute_spectrum_loss"])
     assert attenuated > 0
+
+
+def test_oriented_spectrum_loss_detects_wrong_direction():
+    y, x = np.indices((48, 48))
+    reference = np.sin(2 * np.pi * x / 6)
+    candidate = np.sin(2 * np.pi * y / 6)
+    weights = TextureLossWeights(0, 0, 0, 0, 0, 0, 0, 0,
+                                 oriented_spectrum=1)
+    evaluator = TextureLoss(reference, weights)
+    exact, _ = evaluator.evaluate(reference)
+    changed, parts = evaluator.evaluate(candidate)
+    assert exact == pytest.approx(0.0, abs=1e-14)
+    assert changed == pytest.approx(parts["oriented_spectrum_loss"])
+    assert changed > 0
 
 def test_local_contrast_loss_detects_region_scale_changes():
     y, x = np.indices((48, 48))
@@ -312,6 +327,33 @@ def test_automatic_frequency_limit_is_resolved_from_fit_shape():
 def test_amplitude_refit_interval_validation(value):
     with pytest.raises(ValueError, match="amplitude_refit_interval"):
         FitConfig(amplitude_refit_interval=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_parameter_refinement_pass_validation(value):
+    with pytest.raises(ValueError, match="parameter_refinement_passes"):
+        FitConfig(parameter_refinement_passes=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_parameter_refinement_atom_limit_validation(value):
+    with pytest.raises(ValueError, match="parameter_refinement_atom_limit"):
+        FitConfig(parameter_refinement_atom_limit=value)
+
+
+def test_joint_parameter_refinement_never_worsens_band_loss():
+    u, v = coordinate_grid(32, 32)
+    target = SinusoidComponent(.4, 5, 2, .7).evaluate(u, v)
+    model = ProceduralTextureModel(components=[SinusoidComponent(.3, 4.5, 2.3, .2)])
+    loss = TextureLoss(target, TextureLossWeights(0, 0, 0, 0, 1))
+    before, _ = loss.evaluate(model.evaluate_grid(u, v))
+    metadata = _refine_model_parameters(
+        model, target, loss, u, v,
+        FitConfig(max_iterations=20, max_frequency=12,
+                  parameter_refinement_passes=1), None, None)
+    after, _ = loss.evaluate(model.evaluate_grid(u, v))
+    assert metadata["attempted"]
+    assert after <= before + 1e-12
 
 def test_band_aware_candidates_validation():
     with pytest.raises(ValueError, match="band_aware_candidates"):

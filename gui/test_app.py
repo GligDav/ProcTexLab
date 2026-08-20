@@ -61,7 +61,8 @@ class TestApplication(tk.Tk):
         self.adaptive_weights = tk.BooleanVar(value=True)
         ttk.Checkbutton(weight_controls, text="Estimate statistical weights per band",
                         variable=self.adaptive_weights,
-                        command=self._update_weight_controls).pack(side="left", padx=(8, 4))
+                        command=self._update_weight_controls).pack(
+                            anchor="w", padx=8, pady=(2, 0))
         self.spectrum_weight = tk.DoubleVar(value=1.0)
         self.histogram_weight = tk.DoubleVar(value=0.5)
         self.autocorrelation_weight = tk.DoubleVar(value=0.75)
@@ -70,19 +71,26 @@ class TestApplication(tk.Tk):
         self.local_structure_weight = tk.DoubleVar(value=0.5)
         self.local_contrast_weight = tk.DoubleVar(value=0.5)
         self.absolute_spectrum_weight = tk.DoubleVar(value=0.25)
+        self.oriented_spectrum_weight = tk.DoubleVar(value=0.25)
         self.statistical_weight_entries = []
-        for label, variable in (("Spectrum", self.spectrum_weight),
+        weight_grid = ttk.Frame(weight_controls)
+        weight_grid.pack(fill="x", padx=4, pady=(0, 4))
+        for index, (label, variable) in enumerate((("Spectrum", self.spectrum_weight),
                                 ("Absolute spectrum", self.absolute_spectrum_weight),
+                                ("Oriented spectrum", self.oriented_spectrum_weight),
                                 ("Histogram", self.histogram_weight),
                                 ("Autocorrelation", self.autocorrelation_weight),
                                 ("Gradient", self.gradient_weight),
                                 ("MSE", self.mse_weight),
                                 ("Local structure", self.local_structure_weight),
-                                ("Local contrast", self.local_contrast_weight)):
-            ttk.Label(weight_controls, text=label).pack(side="left", padx=(12, 2))
-            entry = ttk.Entry(weight_controls, textvariable=variable, width=8)
+                                ("Local contrast", self.local_contrast_weight))):
+            cell = ttk.Frame(weight_grid)
+            cell.grid(row=index // 5, column=index % 5, sticky="w", padx=6, pady=2)
+            ttk.Label(cell, text=label).pack(side="left", padx=(0, 2))
+            entry = ttk.Entry(cell, textvariable=variable, width=8)
             entry.pack(side="left")
             if variable not in (self.mse_weight, self.absolute_spectrum_weight,
+                                self.oriented_spectrum_weight,
                                 self.local_structure_weight,
                                 self.local_contrast_weight):
                 self.statistical_weight_entries.append(entry)
@@ -104,6 +112,9 @@ class TestApplication(tk.Tk):
         refit_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.joint_amplitude_refit = tk.BooleanVar(value=True)
         self.amplitude_refit_interval = tk.IntVar(value=2)
+        self.joint_parameter_refinement = tk.BooleanVar(value=True)
+        self.parameter_refinement_passes = tk.IntVar(value=1)
+        self.parameter_refinement_atom_limit = tk.IntVar(value=8)
         self.band_aware_candidates = tk.BooleanVar(value=True)
         ttk.Checkbutton(refit_controls, text="Jointly refit amplitudes",
                         variable=self.joint_amplitude_refit).pack(side="left", padx=8)
@@ -111,6 +122,16 @@ class TestApplication(tk.Tk):
             side="left", padx=(12, 2))
         ttk.Entry(refit_controls, textvariable=self.amplitude_refit_interval,
                   width=7).pack(side="left")
+        ttk.Checkbutton(refit_controls, text="Refine recent atom parameters at end",
+                        variable=self.joint_parameter_refinement).pack(
+                            side="left", padx=(12, 2))
+        ttk.Label(refit_controls, text="Passes").pack(side="left", padx=(8, 2))
+        ttk.Entry(refit_controls, textvariable=self.parameter_refinement_passes,
+                  width=4).pack(side="left")
+        ttk.Label(refit_controls, text="Recent atoms").pack(
+            side="left", padx=(8, 2))
+        ttk.Entry(refit_controls, textvariable=self.parameter_refinement_atom_limit,
+                  width=4).pack(side="left")
         ttk.Checkbutton(refit_controls, text="Band-aware atom roles",
                         variable=self.band_aware_candidates).pack(side="left", padx=12)
         atom_controls = ttk.LabelFrame(self, text="Allowed procedural atoms")
@@ -234,12 +255,17 @@ class TestApplication(tk.Tk):
                          local_structure_weight=self.local_structure_weight.get(),
                          local_contrast_weight=self.local_contrast_weight.get(),
                          absolute_spectrum_weight=self.absolute_spectrum_weight.get(),
+                         oriented_spectrum_weight=self.oriented_spectrum_weight.get(),
                          detail_refinement=self.detail_refinement.get(),
                          detail_max_components=self.detail_components.get(),
                          detail_min_frequency=self.detail_min_frequency.get(),
                          detail_hf_ratio_threshold=self.detail_hf_threshold.get(),
                          joint_amplitude_refit=self.joint_amplitude_refit.get(),
                          amplitude_refit_interval=self.amplitude_refit_interval.get(),
+                         joint_parameter_refinement=self.joint_parameter_refinement.get(),
+                         parameter_refinement_passes=self.parameter_refinement_passes.get(),
+                         parameter_refinement_atom_limit=
+                             self.parameter_refinement_atom_limit.get(),
                          band_aware_candidates=self.band_aware_candidates.get())
 
     def _poll(self):

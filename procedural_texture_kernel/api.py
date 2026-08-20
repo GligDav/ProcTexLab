@@ -53,6 +53,7 @@ class FitConfig:
     local_structure_weight: float = 0.0
     local_contrast_weight: float = 0.0
     absolute_spectrum_weight: float = 0.25
+    oriented_spectrum_weight: float = 0.25
     local_structure_scales: int = 3
     local_structure_orientations: int = 4
     local_structure_block_size: int = 8
@@ -69,6 +70,9 @@ class FitConfig:
     detail_component_families: tuple[str, ...] = DEFAULT_DETAIL_COMPONENT_FAMILIES
     joint_amplitude_refit: bool = True
     amplitude_refit_interval: int = 2
+    joint_parameter_refinement: bool = True
+    parameter_refinement_passes: int = 1
+    parameter_refinement_atom_limit: int = 8
     band_aware_candidates: bool = True
     def __post_init__(self):
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
@@ -111,13 +115,24 @@ class FitConfig:
                 or not isinstance(self.amplitude_refit_interval, int)
                 or self.amplitude_refit_interval < 1):
             raise ValueError("amplitude_refit_interval must be a positive integer")
+        if not isinstance(self.joint_parameter_refinement, bool):
+            raise ValueError("joint_parameter_refinement must be boolean")
+        if (isinstance(self.parameter_refinement_passes, bool)
+                or not isinstance(self.parameter_refinement_passes, int)
+                or self.parameter_refinement_passes < 1):
+            raise ValueError("parameter_refinement_passes must be a positive integer")
+        if (isinstance(self.parameter_refinement_atom_limit, bool)
+                or not isinstance(self.parameter_refinement_atom_limit, int)
+                or self.parameter_refinement_atom_limit < 1):
+            raise ValueError("parameter_refinement_atom_limit must be a positive integer")
         if not isinstance(self.band_aware_candidates, bool):
             raise ValueError("band_aware_candidates must be boolean")
         TextureLossWeights(self.spectrum_weight, self.histogram_weight,
                            self.autocorrelation_weight, self.gradient_weight,
                            self.mse_weight, self.local_structure_weight,
                            self.local_contrast_weight,
-                           self.absolute_spectrum_weight)
+                           self.absolute_spectrum_weight,
+                           self.oriented_spectrum_weight)
         for value, name in ((self.local_structure_scales, "local_structure_scales"),
                             (self.local_structure_orientations,
                              "local_structure_orientations"),
@@ -137,7 +152,8 @@ class FitConfig:
                                   self.autocorrelation_weight, self.gradient_weight,
                                   self.mse_weight, self.local_structure_weight,
                                   self.local_contrast_weight,
-                                  self.absolute_spectrum_weight)
+                                  self.absolute_spectrum_weight,
+                                  self.oriented_spectrum_weight)
 
 @dataclass
 class FitResult:

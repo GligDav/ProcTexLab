@@ -80,7 +80,8 @@ def test_manual_band_weights_remain_available():
     assert result.metadata["objective"]["weight_mode"] == "manual"
     assert all(band["weights"] == {"spectrum": 2, "histogram": 3,
                                    "autocorrelation": 4, "gradient": 5, "mse": 6,
-                                   "local_structure": 0, "local_contrast": 0}
+                                   "local_structure": 0, "local_contrast": 0,
+                                   'absolute_spectrum': 0.25, 'oriented_spectrum': 0.25}
                for band in result.metadata["bands"])
     assert all("features" not in band for band in result.metadata["bands"])
 

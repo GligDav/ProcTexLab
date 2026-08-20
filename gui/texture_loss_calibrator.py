@@ -17,6 +17,7 @@ IMAGE_TYPES = [("Images", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"), ("All files"
 WEIGHTS = (
     ("Spectrum", "spectrum", "spectrum_loss", 1.0),
     ("Absolute spectrum", "absolute_spectrum", "absolute_spectrum_loss", 0.25),
+    ("Oriented spectrum", "oriented_spectrum", "oriented_spectrum_loss", 0.25),
     ("Histogram", "histogram", "histogram_loss", 0.5),
     ("Autocorrelation", "autocorrelation", "autocorrelation_loss", 0.75),
     ("Gradient", "gradient", "gradient_loss", 0.5),

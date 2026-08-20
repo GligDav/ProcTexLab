@@ -115,6 +115,53 @@ def _refit_linear_amplitudes(model: ProceduralTextureModel, target: np.ndarray,
             "before": before, "after": after,
             "improvement": before - after}
 
+
+def _refine_model_parameters(model: ProceduralTextureModel, target: np.ndarray,
+                             loss: TextureLoss, u, v, config: "FitConfig",
+                             progress_callback=None, cancel_callback=None) -> dict:
+    """Revisit accepted atoms with coordinate-descent nonlinear refinement."""
+    initial, _ = loss.evaluate(model.evaluate_grid(u, v))
+    passes = []
+    for pass_index in range(config.parameter_refinement_passes):
+        pass_before, _ = loss.evaluate(model.evaluate_grid(u, v))
+        accepted = 0
+        first_index = max(0, len(model.components)
+                          - config.parameter_refinement_atom_limit)
+        for index in range(first_index, len(model.components)):
+            atom = model.components[index]
+            if cancel_callback is not None and cancel_callback():
+                raise RuntimeError("fitting cancelled")
+            full = model.evaluate_grid(u, v)
+            current_without_atom = full - atom.evaluate(u, v)
+            refined = _refine_new_atom(
+                atom, current_without_atom, loss, u, v,
+                max(8, config.max_iterations // 2), config.max_frequency)
+            before, _ = loss.evaluate(full)
+            after, _ = loss.evaluate(
+                current_without_atom + refined.evaluate(u, v))
+            if after < before - 1e-12:
+                model.components[index] = refined
+                accepted += 1
+            completed = ((pass_index * (len(model.components) - first_index)
+                          + index - first_index + 1)
+                         / (config.parameter_refinement_passes
+                            * max(len(model.components) - first_index, 1)))
+            _notify(progress_callback, "parameter_refinement", completed,
+                    f"Parameter pass {pass_index + 1}/"
+                    f"{config.parameter_refinement_passes}: atom "
+                    f"{index - first_index + 1}/"
+                    f"{len(model.components) - first_index}")
+        pass_after, _ = loss.evaluate(model.evaluate_grid(u, v))
+        passes.append({"pass": pass_index + 1, "before": pass_before,
+                       "after": pass_after, "improvement": pass_before - pass_after,
+                       "accepted_atoms": accepted})
+        if accepted == 0:
+            break
+    final, _ = loss.evaluate(model.evaluate_grid(u, v))
+    return {"attempted": True, "passes": passes, "before": initial,
+            "after": final, "improvement": initial - final,
+            "accepted_atoms": sum(item["accepted_atoms"] for item in passes)}
+
 def _fft_sinusoid_candidates(residual, config, count: int):
     """Use a Hann window to suppress non-periodic boundary leakage."""
     h, w = residual.shape
@@ -513,7 +560,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                      estimated.autocorrelation, estimated.gradient,
                                      config.mse_weight, config.local_structure_weight,
                                      config.local_contrast_weight,
-                                     config.absolute_spectrum_weight)
+                                     config.absolute_spectrum_weight,
+                                     config.oriented_spectrum_weight)
     loss = TextureLoss(target, weights,
                        config.local_structure_scales,
                        config.local_structure_orientations,
@@ -593,11 +641,21 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             and len(model.components) % config.amplitude_refit_interval != 0):
         final_refit = _refit_linear_amplitudes(
             model, target, loss, u, v, config.ridge, config.fit_plane)
+    parameter_refinement = {"attempted": False, "passes": [],
+                            "accepted_atoms": 0}
+    if config.joint_parameter_refinement and model.components:
+        parameter_refinement = _refine_model_parameters(
+            model, target, loss, u, v, config,
+            progress_callback, cancel_callback)
+        if config.joint_amplitude_refit:
+            final_refit = _refit_linear_amplitudes(
+                model, target, loss, u, v, config.ridge, config.fit_plane)
     final_loss, final_parts = loss.evaluate(model.evaluate_grid(u, v))
     result = {"band": band_index + 1, "components": len(model.components),
                    "candidate_families": list(active_families),
                    "iterations": history, "final_loss": final_loss,
                    "final_amplitude_refit": final_refit,
+                   "parameter_refinement": parameter_refinement,
                    "loss_components": final_parts,
                    "weights": {"spectrum": weights.spectrum,
                                "histogram": weights.histogram,
@@ -607,6 +665,7 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                "local_structure": weights.local_structure,
                                "local_contrast": weights.local_contrast,
                                "absolute_spectrum": weights.absolute_spectrum}}
+    result["weights"]["oriented_spectrum"] = weights.oriented_spectrum
     if analysis is not None:
         result["features"] = analysis.features.to_dict()
     return model, result
@@ -757,6 +816,14 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                  "mse_weight": config.mse_weight,
                                  "absolute_spectrum_weight":
                                      config.absolute_spectrum_weight,
+                                 "oriented_spectrum_weight":
+                                     config.oriented_spectrum_weight,
+                                 "joint_parameter_refinement":
+                                     config.joint_parameter_refinement,
+                                 "parameter_refinement_passes":
+                                     config.parameter_refinement_passes,
+                                 "parameter_refinement_atom_limit":
+                                     config.parameter_refinement_atom_limit,
                                  "local_contrast_weight": config.local_contrast_weight,
                                  "local_structure": {
                                      "weight": config.local_structure_weight,
