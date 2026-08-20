@@ -98,8 +98,10 @@ Set `detail_refinement=True` to run an adaptive high-frequency residual pass aft
 the normal multiband fit. It activates only when the fitting-resolution
 `high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters
 the signed reconstruction residual, and fits a separate budget of detail atoms.
-The candidate is retained only when both absolute HF-energy error and full-image
-MSE improve. Configuration includes `detail_max_components`,
+The candidate must improve absolute HF-energy error. When `mse_weight` is
+positive it must also avoid worsening full-image MSE; an MSE weight of zero
+removes MSE from both detail fitting and this final acceptance gate.
+Configuration includes `detail_max_components`,
 `detail_min_frequency`, `detail_min_improvement`, `detail_base_sigma`, and
 `detail_component_families`. Detailed before/after diagnostics and the acceptance
 decision are stored in `result.metadata["detail_refinement"]`.

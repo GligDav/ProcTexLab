@@ -861,11 +861,12 @@ def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
         component_families=families, fit_plane=False,
         adaptive_texture_weights=False, spectrum_weight=.25,
         histogram_weight=0.0, autocorrelation_weight=.25,
-        gradient_weight=1.0, mse_weight=4.0,
+        gradient_weight=1.0, mse_weight=config.mse_weight,
         detail_refinement=False,
     )
     metadata["attempted"] = True
     metadata["component_families"] = list(families)
+    metadata["mse_weight"] = detail_config.mse_weight
     metadata["residual_rms"] = float(np.sqrt(np.mean(residual * residual)))
     metadata["detail_target_rms"] = float(np.sqrt(np.mean(detail_target * detail_target)))
     _notify(progress_callback, "detail_refinement", 0,
@@ -880,17 +881,25 @@ def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
     after_error = abs(_high_frequency_energy(after_diagnostics, "result") - target_hf)
     before_mse = float(np.mean((target - before_image) ** 2))
     after_mse = float(np.mean((target - after_image) ** 2))
+    mse_gate_enabled = detail_config.mse_weight > 0
+    mse_acceptable = (not mse_gate_enabled
+                      or after_mse <= before_mse + 1e-12)
     accepted = (len(detail_model.components) > 0 and after_error < before_error
-                and after_mse <= before_mse + 1e-12)
+                and mse_acceptable)
     metadata.update({"accepted": accepted, "after": after_diagnostics,
                      "components": len(detail_model.components),
                      "iterations": detail_result["iterations"],
                      "loss_components": detail_result["loss_components"],
                      "before_hf_absolute_error": before_error,
                      "after_hf_absolute_error": after_error,
-                     "before_mse": before_mse, "after_mse": after_mse})
+                     "before_mse": before_mse, "after_mse": after_mse,
+                     "mse_gate_enabled": mse_gate_enabled,
+                     "mse_acceptable": mse_acceptable})
     if not accepted:
-        metadata["reason"] = "candidate_did_not_improve_hf_energy_and_mse"
+        metadata["reason"] = (
+            "candidate_did_not_improve_hf_energy_or_enabled_mse"
+            if mse_gate_enabled else
+            "candidate_did_not_improve_hf_energy")
         return model, metadata
     _notify(progress_callback, "detail_refinement", 1,
             f"Accepted {len(detail_model.components)} high-frequency detail atoms")

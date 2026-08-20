@@ -134,6 +134,24 @@ def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
     assert detail["components"] == 1
     assert detail["after_hf_absolute_error"] < detail["before_hf_absolute_error"]
     assert detail["after_mse"] <= detail["before_mse"]
+    assert detail["mse_weight"] == 1.0
+    assert detail["mse_gate_enabled"]
+
+
+def test_high_frequency_refinement_respects_zero_mse_weight():
+    y, x = np.indices((48, 48))
+    image = .5 + .2 * np.sin(2 * np.pi * x / 4)
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=0, fitting_resolution=None,
+        component_families=("sinusoid",), max_frequency=20,
+        mse_weight=0, detail_refinement=True, detail_max_components=1,
+        detail_min_frequency=8, detail_hf_ratio_threshold=.9,
+        max_iterations=20, min_improvement=0)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert detail["attempted"]
+    assert detail["mse_weight"] == 0
+    assert not detail["mse_gate_enabled"]
+    assert detail["mse_acceptable"]
 
 
 def test_high_frequency_refinement_skips_when_threshold_is_met():
