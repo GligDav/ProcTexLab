@@ -94,6 +94,30 @@ def test_decomposition_configuration_validation():
         create_decomposition("unknown")
 
 
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_band_worker_validation(value):
+    with pytest.raises(ValueError, match="band_workers"):
+        FitConfig(band_workers=value)
+
+
+def test_parallel_band_fit_preserves_order_results_and_monotonic_progress():
+    y, x = np.indices((20, 24))
+    image = .5 + .15 * np.sin(2 * np.pi * x / 6)
+    common = dict(decomposition_bands=3, max_components=1,
+                  max_iterations=3, fitting_resolution=None,
+                  component_families=("sinusoid",),
+                  joint_parameter_refinement=False)
+    sequential = TextureFitter(FitConfig(**common, band_workers=1)).fit(image)
+    progress = []
+    parallel = TextureFitter(FitConfig(**common, band_workers=2)).fit(
+        image, progress_callback=lambda _stage, value, _message: progress.append(value))
+    assert np.allclose(parallel.reconstruction, sequential.reconstruction)
+    assert [band["band"] for band in parallel.metadata["bands"]] == [1, 2, 3]
+    assert parallel.metadata["band_workers"] == 2
+    band_progress = progress[:progress.index(1.0) + 1]
+    assert band_progress == sorted(band_progress)
+
+
 def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
     y, x = np.indices((48, 48))
     image = .5 + .2 * np.sin(2 * np.pi * x / 4)

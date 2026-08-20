@@ -1,7 +1,9 @@
 """Research-driven sparse, residual and multiscale fitting implementation."""
 from __future__ import annotations
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
+from threading import Lock
 from typing import TYPE_CHECKING
 import numpy as np
 from scipy.ndimage import gaussian_filter, zoom
@@ -677,8 +679,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                         "family": chosen.type_name,
                         "texture_loss": after, "improvement": before - after,
                         "amplitude_refit": amplitude_refit, **parts})
-        completed = band_index * config.max_components + iteration + 1
-        total = max(band_count * config.max_components, 1)
+        completed = iteration + 1
+        total = max(config.max_components, 1)
         _notify(progress_callback, "fitting", completed / total,
                 f"Band {band_index + 1}/{band_count}: added {chosen.type_name} "
                 f"atom {iteration + 1}/{config.max_components}")
@@ -819,16 +821,53 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                                          config.decomposition_bands,
                                          config.decomposition_base_sigma)
     target_bands = decomposition.decompose(fit_target)
-    models = []
-    band_results = []
-    for band_index, band_target in enumerate(target_bands):
-        _notify(progress_callback, "initialization",
-                band_index / max(len(target_bands), 1),
-                f"Initializing band {band_index + 1}/{len(target_bands)}")
-        band_model, band_result = _fit_band(
-            band_target, config, band_index, len(target_bands),
-            progress_callback, cancel_callback)
-        models.append(band_model); band_results.append(band_result)
+    band_count = len(target_bands)
+    band_progress = [0.0] * band_count
+    progress_lock = Lock()
+
+    def band_callback(band_index: int):
+        def report(stage: str, value: float, message: str) -> None:
+            # Serialize callbacks and report the mean completion of all bands.
+            # max() prevents a later fitting stage from moving progress backward.
+            with progress_lock:
+                band_progress[band_index] = max(
+                    band_progress[band_index], float(np.clip(value, 0, 1)))
+                _notify(progress_callback, stage,
+                        sum(band_progress) / max(band_count, 1), message)
+        return report
+
+    def process_band(item):
+        band_index, band_target = item
+        callback = band_callback(band_index)
+        callback("initialization", 0.0,
+                 f"Initializing band {band_index + 1}/{band_count}")
+        result = _fit_band(band_target, config, band_index, band_count,
+                           callback, cancel_callback)
+        callback("fitting", 1.0,
+                 f"Completed band {band_index + 1}/{band_count}")
+        return result
+
+    indexed_bands = list(enumerate(target_bands))
+    effective_workers = min(config.band_workers, band_count)
+    if effective_workers == 1:
+        fitted_bands = [process_band(item) for item in indexed_bands]
+    else:
+        with ThreadPoolExecutor(max_workers=effective_workers,
+                                thread_name_prefix="texture-band") as executor:
+            futures = {executor.submit(process_band, item): item[0]
+                       for item in indexed_bands}
+            ordered_results = [None] * band_count
+            try:
+                for future in as_completed(futures):
+                    ordered_results[futures[future]] = future.result()
+            except Exception:
+                for future in futures:
+                    future.cancel()
+                raise
+            # Store by source index so scheduling cannot affect composition.
+            fitted_bands = ordered_results
+    models = [item[0] for item in fitted_bands]
+    band_results = [item[1] for item in fitted_bands]
     model = _combine_models(models)
     if config.detail_refinement:
         model, detail_result = _refine_high_frequency(
@@ -843,6 +882,7 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "iterations": history, "elapsed_seconds": time.perf_counter() - started,
                    "seed": config.seed,
                    "noise_seed_candidates": config.noise_seed_candidates,
+                   "band_workers": effective_workers,
                    "frequency_range": {"minimum": config.min_frequency,
                                        "maximum": config.max_frequency,
                                        "maximum_mode": ("automatic" if

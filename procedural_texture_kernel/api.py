@@ -62,6 +62,7 @@ class FitConfig:
     decomposition_method: str = "laplacian"
     decomposition_bands: int = 5
     decomposition_base_sigma: float = 1.0
+    band_workers: int = 1
     detail_refinement: bool = False
     detail_max_components: int = 12
     detail_min_frequency: float = 12.0
@@ -94,6 +95,10 @@ class FitConfig:
             raise ValueError("min_improvement must be a finite, non-negative number")
         if not set(self.component_families) <= allowed:
             raise ValueError("unsupported component family")
+        if (isinstance(self.band_workers, bool)
+                or not isinstance(self.band_workers, int)
+                or self.band_workers < 1):
+            raise ValueError("band_workers must be a positive integer")
         if self.detail_max_components < 0:
             raise ValueError("detail_max_components must be non-negative")
         if (not math.isfinite(self.detail_min_frequency)

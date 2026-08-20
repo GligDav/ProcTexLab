@@ -77,6 +77,13 @@ Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `
 anti-aliasing margin. An explicit cycle-per-UV value still overrides it. Input
 downsampling applies a Gaussian anti-aliasing filter before resampling.
 
+Independent decomposition bands can be fitted concurrently with `band_workers`.
+The public API defaults to one worker; the development GUI defaults to three.
+Threaded results retain band order and deterministic model composition, while
+progress is aggregated across bands. Values above the band count are harmlessly
+capped. Because numerical libraries may also use internal threads, increasing
+the setting beyond the available physical cores can reduce performance.
+
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
 Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration.

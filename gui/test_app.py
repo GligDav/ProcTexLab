@@ -40,6 +40,7 @@ class TestApplication(tk.Tk):
         self.noise_seed_candidates = tk.IntVar(value=4)
         self.max_frequency = tk.DoubleVar(value=0.0)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
+        self.band_workers = tk.IntVar(value=3)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
                                 ("Fit resolution", self.resolution),
@@ -109,6 +110,10 @@ class TestApplication(tk.Tk):
                                 ("HF threshold", self.detail_hf_threshold)):
             ttk.Label(detail_controls, text=label).pack(side="left", padx=(12, 2))
             ttk.Entry(detail_controls, textvariable=variable, width=7).pack(side="left")
+        ttk.Label(detail_controls, text="Band workers").pack(
+            side="left", padx=(12, 2))
+        ttk.Entry(detail_controls, textvariable=self.band_workers,
+                  width=4).pack(side="left")
         refit_controls = ttk.LabelFrame(self, text="Joint atom amplitude refinement")
         refit_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.joint_amplitude_refit = tk.BooleanVar(value=True)
@@ -243,6 +248,7 @@ class TestApplication(tk.Tk):
                          noise_seed_candidates=self.noise_seed_candidates.get(),
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
+                         band_workers=self.band_workers.get(),
                          component_families=families,
                          max_frequency=(None if self.max_frequency.get() <= 0
                                         else self.max_frequency.get()),
