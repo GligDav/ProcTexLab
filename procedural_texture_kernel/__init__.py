@@ -14,6 +14,7 @@ from .weight_estimator import (BandFeatureExtractor, BandFeatures, LossWeights,
                                WeightEstimatorResult, WeightMappingConfig)
 __all__ = ["FitConfig", "FitResult", "TextureFitter", "ProceduralTextureModel",
            "ProceduralComponent", "SinusoidComponent", "GaborComponent",
+           "SpectralNoiseComponent",
            "GaussianRBFComponent", "PerlinNoiseComponent", "ThresholdedNoiseComponent",
            "MaskedNoiseComponent", "WaveletComponent",
            "ShaderNode", "ShaderGraph", "ShaderGraphComponent",

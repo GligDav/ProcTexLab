@@ -13,6 +13,7 @@ from .measurement_diagnostics_viewer import MeasurementDiagnosticsDialog
 
 ATOM_LABELS = {
     "sinusoid": "Sinusoid", "gabor": "Gabor", "gaussian_rbf": "Gaussian RBF",
+    "spectral_noise": "Spectral noise bundle",
     "perlin_noise": "Perlin noise", "thresholded_noise": "Thresholded noise",
     "masked_noise": "Masked region detail", "wavelet": "Wavelet",
     "shader_graph": "Shader graph region mix",
@@ -39,6 +40,7 @@ class TestApplication(tk.Tk):
         self.components = tk.IntVar(value=12); self.iterations = tk.IntVar(value=60)
         self.resolution = tk.IntVar(value=192); self.seed = tk.IntVar(value=0)
         self.noise_seed_candidates = tk.IntVar(value=4)
+        self.spectral_noise_modes = tk.IntVar(value=32)
         self.max_frequency = tk.DoubleVar(value=0.0)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.band_workers = tk.IntVar(value=3)
@@ -115,6 +117,10 @@ class TestApplication(tk.Tk):
             side="left", padx=(12, 2))
         ttk.Entry(detail_controls, textvariable=self.band_workers,
                   width=4).pack(side="left")
+        ttk.Label(detail_controls, text="Spectral modes").pack(
+            side="left", padx=(12, 2))
+        ttk.Entry(detail_controls, textvariable=self.spectral_noise_modes,
+                  width=5).pack(side="left")
         refit_controls = ttk.LabelFrame(self, text="Joint atom amplitude refinement")
         refit_controls.pack(fill="x", padx=16, pady=(0, 4))
         self.joint_amplitude_refit = tk.BooleanVar(value=True)
@@ -247,6 +253,7 @@ class TestApplication(tk.Tk):
             raise ValueError("select at least one procedural atom family")
         return FitConfig(seed=self.seed.get(), max_components=self.components.get(),
                          noise_seed_candidates=self.noise_seed_candidates.get(),
+                         spectral_noise_modes=self.spectral_noise_modes.get(),
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
                          band_workers=self.band_workers.get(),

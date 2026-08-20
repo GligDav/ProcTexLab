@@ -39,7 +39,7 @@ result.save_json("fit.json")
 ## Architecture
 
 - `coordinates.py` owns the one coordinate convention and cached grid construction.
-- `components.py` defines typed, serializable sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
+- `components.py` defines typed, serializable Fourier bundles, sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
 - `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, gradient-statistics, and MSE objective.
@@ -86,7 +86,7 @@ the setting beyond the available physical cores can reduce performance.
 
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
-Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration.
+Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration. The `spectral_noise` candidate packs the strongest unique residual FFT modes into one atom; `spectral_noise_modes` controls its bounded mode count (default 32).
 
 `masked_noise` is a deliberately constrained compositional atom: it applies independent detail noise to either side of a coherent mask without introducing a general shader-graph search space. Both mask sides are proposed, while mask shape and detail placement are refined continuously.
 
@@ -116,7 +116,7 @@ default performs one pass over the eight most recently accepted atoms; configure
 `parameter_refinement_passes` and `parameter_refinement_atom_limit` to trade fit
 quality for runtime. Every pass and accepted replacement is recorded per band.
 
-The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
+The fitter includes individual Fourier modes, compact spectral-noise bundles, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Spectral bundles target the high-frequency energy that a small atom budget would otherwise miss, while using integer FFT modes so the result tiles over the source UV interval. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model
 
@@ -125,6 +125,7 @@ Pixels use normalized half-open coordinates: `u = column / width`, `v = row / he
 The component types are:
 
 - `SinusoidComponent`: amplitude, U/V frequency vector, phase.
+- `SpectralNoiseComponent`: amplitude plus a deterministic weighted bundle of U/V Fourier frequencies and phases. Its basis is RMS-normalized so candidate projection controls the overall contrast.
 - `GaborComponent`: amplitude, center, two Gaussian widths, carrier frequency, orientation, phase.
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.

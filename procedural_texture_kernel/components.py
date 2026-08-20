@@ -26,6 +26,30 @@ class SinusoidComponent(ProceduralComponent):
     def basis(self, u, v):
         return np.cos(2.0 * np.pi * (self.frequency_u * u + self.frequency_v * v) + self.phase)
 
+
+@dataclass
+class SpectralNoiseComponent(ProceduralComponent):
+    """Compact deterministic bundle of weighted Fourier modes."""
+    frequencies_u: tuple[float, ...] = ()
+    frequencies_v: tuple[float, ...] = ()
+    weights: tuple[float, ...] = ()
+    phases: tuple[float, ...] = ()
+    type_name: ClassVar[str] = "spectral_noise"
+
+    def basis(self, u, v):
+        lengths = {len(self.frequencies_u), len(self.frequencies_v),
+                   len(self.weights), len(self.phases)}
+        if len(lengths) != 1:
+            raise ValueError("Spectral noise mode arrays must have equal lengths")
+        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)),
+                          dtype=np.float64)
+        for fu, fv, weight, phase in zip(
+                self.frequencies_u, self.frequencies_v,
+                self.weights, self.phases):
+            result += weight * np.cos(2.0 * np.pi * (fu * u + fv * v) + phase)
+        rms = np.sqrt(.5 * np.sum(np.asarray(self.weights, dtype=float) ** 2))
+        return result / max(float(rms), 1e-12)
+
 @dataclass
 class GaborComponent(ProceduralComponent):
     """Gaussian-windowed oriented cosine atom."""
@@ -494,7 +518,7 @@ class SimpleConstantComponent(ProceduralComponent):
         return np.ones(np.broadcast_shapes(np.shape(u), np.shape(v))) * self.value
 
 COMPONENT_TYPES = {c.type_name: c for c in (
-    SinusoidComponent, GaborComponent, GaussianRBFComponent,
+    SinusoidComponent, SpectralNoiseComponent, GaborComponent, GaussianRBFComponent,
     PerlinNoiseComponent, ThresholdedNoiseComponent, MaskedNoiseComponent, WaveletComponent,
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,

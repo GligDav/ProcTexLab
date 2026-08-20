@@ -14,6 +14,7 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     MaskedNoiseComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
+    SpectralNoiseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
     VoronoiNoiseComponent, WarpedRidgeDetailComponent,
     WarpedRidgedMultifractalComponent, WaveletComponent,
@@ -30,7 +31,8 @@ if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
 
 _DETAIL_FAMILIES = frozenset({
-    "sinusoid", "gabor", "wavelet", "dog_log", "sparse_impulse", "line",
+    "sinusoid", "spectral_noise", "gabor", "wavelet", "dog_log",
+    "sparse_impulse", "line",
     "perlin_noise", "turbulence_noise",
 })
 _STRUCTURE_FAMILIES = frozenset({
@@ -191,6 +193,43 @@ def _fft_sinusoid_candidates(residual, config, count: int):
                                               frequency_v=float(fy[iy, ix])))
         if len(candidates) >= count: break
     return candidates
+
+
+def _spectral_noise_candidate(residual, config):
+    """Bundle the strongest unique residual modes into one procedural atom."""
+    h, w = residual.shape
+    # Unlike peak-only proposals, this atom reconstructs the selected integer
+    # Fourier bins directly. Use their unwindowed coefficients: a Hann window
+    # spreads one strong mode into adjacent bins, which wastes a bounded mode
+    # budget and makes the stored weights cease to be least-squares weights for
+    # the component's periodic basis.
+    spectrum = np.fft.fft2(residual - residual.mean())
+    fy, fx = np.meshgrid(np.fft.fftfreq(h) * h,
+                         np.fft.fftfreq(w) * w, indexing="ij")
+    radius = np.hypot(fx, fy)
+    maximum = (config.max_frequency if config.max_frequency is not None
+               else .45 * min(h, w))
+    # Keep one member of each conjugate pair. Integer FFT modes tile exactly
+    # over the source UV interval and continue at arbitrary output resolution.
+    canonical = (fy > 0) | ((fy == 0) & (fx > 0))
+    valid = (canonical & (radius >= config.min_frequency)
+             & (radius <= maximum))
+    magnitude = np.where(valid, np.abs(spectrum), -np.inf)
+    flat_magnitude = magnitude.ravel()
+    order = np.argsort(flat_magnitude)[::-1]
+    selected = [flat for flat in order
+                if np.isfinite(flat_magnitude[flat])][
+                    :config.spectral_noise_modes]
+    if not selected:
+        return None
+    indices = [np.unravel_index(flat, spectrum.shape) for flat in selected]
+    raw_weights = np.asarray([abs(spectrum[index]) for index in indices], float)
+    raw_weights /= max(float(np.max(raw_weights)), 1e-12)
+    return SpectralNoiseComponent(
+        frequencies_u=tuple(float(fx[index]) for index in indices),
+        frequencies_v=tuple(float(fy[index]) for index in indices),
+        weights=tuple(map(float, raw_weights)),
+        phases=tuple(float(np.angle(spectrum[index])) for index in indices))
 
 def _project(atom, residual, u, v):
     basis = atom.basis(u, v)
@@ -669,6 +708,11 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         residual = target - current
         before, _ = loss.evaluate(current)
         candidates = []
+        if "spectral_noise" in active_families:
+            spectral_candidate = _spectral_noise_candidate(
+                residual, candidate_config)
+            if spectral_candidate is not None:
+                candidates.append(spectral_candidate)
         if "sinusoid" in active_families:
             candidates.extend(_fft_sinusoid_candidates(
                 residual, candidate_config, config.fft_candidates))

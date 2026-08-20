@@ -17,7 +17,8 @@ from .spectral_diagnostics import compare_spectra
 ProgressCallback = Callable[[str, float, str], None]
 CancelCallback = Callable[[], bool]
 SUPPORTED_COMPONENT_FAMILIES = (
-    "sinusoid", "gabor", "gaussian_rbf", "perlin_noise", "thresholded_noise",
+    "sinusoid", "spectral_noise", "gabor", "gaussian_rbf", "perlin_noise",
+    "thresholded_noise",
     "masked_noise", "wavelet",
     "shader_graph",
     "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
@@ -28,7 +29,8 @@ SUPPORTED_COMPONENT_FAMILIES = (
     "sparse_impulse", "binary_primitive", "simple_constant"
 )
 DEFAULT_DETAIL_COMPONENT_FAMILIES = (
-    "sinusoid", "gabor", "wavelet", "dog_log", "sparse_impulse", "line"
+    "sinusoid", "spectral_noise", "gabor", "wavelet", "dog_log",
+    "sparse_impulse", "line"
 )
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class FitConfig:
     fitting_resolution: int | None = 192
     component_families: tuple[str, ...] = SUPPORTED_COMPONENT_FAMILIES
     fft_candidates: int = 24
+    spectral_noise_modes: int = 32
     noise_seed_candidates: int = 4
     min_frequency: float = 0.5
     max_frequency: float | None = None
@@ -81,6 +84,10 @@ class FitConfig:
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
             raise ValueError("component/iteration/candidate counts are invalid")
+        if (isinstance(self.spectral_noise_modes, bool)
+                or not isinstance(self.spectral_noise_modes, int)
+                or self.spectral_noise_modes < 1):
+            raise ValueError("spectral_noise_modes must be a positive integer")
         if (isinstance(self.noise_seed_candidates, bool)
                 or not isinstance(self.noise_seed_candidates, int)
                 or self.noise_seed_candidates < 1):

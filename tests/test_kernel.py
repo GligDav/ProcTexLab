@@ -3,7 +3,8 @@ import numpy as np
 import pytest
 from scipy.ndimage import gaussian_filter
 from procedural_texture_kernel import (FitConfig, GaborComponent, GaussianRBFComponent,
-    PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent, TextureFitter,
+    PerlinNoiseComponent, ProceduralTextureModel, SinusoidComponent,
+    SpectralNoiseComponent, TextureFitter,
     WaveletComponent, normalize_image)
 from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
@@ -18,7 +19,8 @@ from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.fitting import (
     _adaptive_noise_frequencies, _diverse_candidate_shortlist,
     _local_structure_estimate,
-    _perlin_candidates, _refine_model_parameters, _refine_new_atom)
+    _perlin_candidates, _refine_model_parameters, _refine_new_atom,
+    _spectral_noise_candidate)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
 def test_coordinates():
@@ -38,6 +40,10 @@ def test_coordinate_region_and_extended_evaluation():
         model.evaluate_region(4, 4, (1, 1), (0, 1))
 
 @pytest.mark.parametrize("component", [SinusoidComponent(), GaborComponent(), GaussianRBFComponent(),
+                                        SpectralNoiseComponent(
+                                            frequencies_u=(2., 4.),
+                                            frequencies_v=(1., -3.),
+                                            weights=(1., .4), phases=(.2, -.7)),
                                         PerlinNoiseComponent(), WaveletComponent()])
 def test_components_are_finite(component):
     u,v=coordinate_grid(13,9); result=component.evaluate(u,v)
@@ -59,6 +65,28 @@ def test_perlin_is_seeded_and_wavelet_is_localized():
     values = wavelet.basis(u, v)
     assert values[12, 16] == pytest.approx(1.0)
     assert abs(values[0, 0]) < 1e-10
+
+
+def test_spectral_noise_candidate_captures_multiple_residual_modes():
+    u, v = coordinate_grid(48, 40)
+    residual = (.8 * np.cos(2 * np.pi * (7 * u + 2 * v) + .3)
+                + .35 * np.cos(2 * np.pi * (-3 * u + 6 * v) - .8))
+    candidate = _spectral_noise_candidate(
+        residual, FitConfig(spectral_noise_modes=2, max_frequency=12))
+    assert candidate is not None
+    assert len(candidate.weights) == 2
+    basis = candidate.basis(u, v)
+    amplitude = np.vdot(basis, residual).real / np.vdot(basis, basis).real
+    assert np.mean((residual - amplitude * basis) ** 2) < np.mean(residual ** 2) * .2
+    assert np.allclose(basis, candidate.basis(u + 1, v + 1), atol=1e-12)
+
+
+def test_spectral_noise_rejects_mismatched_mode_arrays():
+    component = SpectralNoiseComponent(
+        frequencies_u=(1.,), frequencies_v=(1., 2.),
+        weights=(1.,), phases=(0.,))
+    with pytest.raises(ValueError, match="equal lengths"):
+        component.basis(*coordinate_grid(8, 8))
 
 @pytest.mark.parametrize("component", [PerlinNoiseComponent(.2, 5, 2, .6, 2.1, .1, -.2, 12),
                                         WaveletComponent(-.3, .2, .7, .08, .15, .4)])
@@ -146,6 +174,9 @@ def test_warped_ridge_detail_complements_share_the_same_detail():
 
 def test_new_component_families_can_be_fitted():
     cases = (
+        ("spectral_noise", SpectralNoiseComponent(
+            .2, frequencies_u=(4., 7.), frequencies_v=(1., -2.),
+            weights=(1., .35), phases=(.2, -.6))),
         ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
         ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
         ("thresholded_noise", ThresholdedNoiseComponent(
@@ -389,6 +420,12 @@ def test_band_aware_candidates_validation():
 def test_noise_seed_candidate_validation(value):
     with pytest.raises(ValueError, match="noise_seed_candidates"):
         FitConfig(noise_seed_candidates=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_spectral_noise_mode_validation(value):
+    with pytest.raises(ValueError, match="spectral_noise_modes"):
+        FitConfig(spectral_noise_modes=value)
 
 def test_adaptive_noise_frequencies_include_residual_peak():
     y, x = np.indices((40, 48))
