@@ -259,6 +259,69 @@ pytest
 
 Tests cover all atom evaluations, seeded Perlin determinism, wavelet localization, model composition and JSON round trips, coordinates, metrics, image normalization, deterministic synthetic fitting, constant fields, and non-square rasters.
 
+## Improvement ideas
+
+The current reconstruction is close enough that further work should focus on
+procedural generalization, resolution, and runtime rather than simply adding
+more atom families. Suggested remaining work, roughly in priority order, is:
+
+1. **Define and measure non-memorizing texture similarity.** A zero MSE weight
+   only removes the explicit pixel-error term; it does not make an exact copy a
+   bad solution. An exact copy also minimizes spectrum, histogram,
+   autocorrelation, gradient, local-contrast, and local-structure discrepancies.
+   Add continuation-aware measurements such as statistics over several UV
+   windows, random translations, phase-scrambled controls, patch-distribution
+   distances, and held-out crops. Model complexity and repetition should be
+   reported alongside source-domain loss.
+2. **Finish the zero-MSE audit.** High-frequency refinement now inherits
+   `mse_weight` and disables its MSE acceptance gate at zero, but several
+   proposal mechanisms remain deliberately pixel aligned: the initial plane,
+   residual amplitude projection, joint least-squares amplitude proposals, FFT
+   phases, and per-band residual fitting. Their proposals are accepted using the
+   configured texture objective, yet they strongly bias the search toward the
+   source realization. Experiment with phase-free or randomized-phase spectral
+   proposals, translation-ensemble objectives, statistic-based amplitude
+   initialization, and an explicit `spatial_alignment_weight` separate from
+   MSE. Add metadata and tests that distinguish proposal scoring from final
+   objective scoring.
+3. **Improve high-resolution fitting performance.** Profile feature extraction,
+   candidate evaluation, basis synthesis, and nonlinear refinement separately.
+   Cache reusable bases and target features, evaluate candidates in batches,
+   FFT-accelerate localized correlation, avoid recomputing the complete model
+   for single-atom trials, and use coarse-to-fine parameter refinement. After
+   the CPU path is measured, consider process-level parallelism or array/GPU
+   backends. This should allow a larger `fitting_resolution` without changing
+   fitting semantics.
+4. **Use a progressive-resolution schedule.** Fit structure at low resolution,
+   transfer the model to successively larger rasters, and unlock finer bands and
+   higher frequencies at each stage. Re-optimize only parameters affected by a
+   new stage. This should be cheaper and more stable than running every family
+   against the full-resolution raster from the start.
+5. **Add sparse model selection and consolidation.** Penalize component count
+   and spectral-bundle mode count, prune atoms whose removal does not harm the
+   statistical objective, merge redundant atoms, and compare LASSO/elastic-net
+   amplitude refits with the current ridge solve. This is especially important
+   for preventing `SpectralNoiseComponent` from becoming a compact raster
+   encoding rather than a procedural description.
+6. **Strengthen continuation and boundary behavior.** Add optional periodic seam
+   loss, boundary-conditioned candidate generation, and diagnostics over UV
+   extents larger than one. Separate explicitly tileable components from
+   components intended to vary indefinitely, and test both behaviors at several
+   output resolutions.
+7. **Expand the multiscale representation where diagnostics justify it.** Useful
+   candidates include steerable or wavelet-packet decompositions, locally
+   modulated spectral noise, improved conditional detail masks, broader adaptive
+   seed search, and cross-band dependencies. Add a family only when a measured
+   residual statistic cannot be represented efficiently by the existing warped
+   ridge, masked-detail, and spectral-bundle atoms.
+
+The MSE issue should therefore not be treated only as a weight-propagation bug.
+With all discrepancy losses minimized by the source image, the optimizer has no
+reason to prefer a statistically equivalent but different realization. A future
+"texture synthesis" mode should explicitly reward generalization or phase
+freedom, while a separate "reconstruction" mode can retain the current
+pixel-aligned proposals.
+
 ## Current limitations
 
 The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, broader/adaptive noise seed searches, discrete wavelet decompositions, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
