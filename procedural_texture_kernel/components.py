@@ -282,6 +282,25 @@ class DomainWarpedNoiseComponent(FractalBrownianMotionComponent):
                              self.frequency, self.octaves, self.persistence,
                              self.lacunarity, self.offset_u, self.offset_v, self.seed)
 
+
+@dataclass
+class WarpedRidgedMultifractalComponent(RidgedMultifractalComponent):
+    """Anisotropic ridges sampled through a smooth vector-valued warp field."""
+    warp_amplitude: float = 0.15
+    warp_frequency: float = 2.0
+    warp_octaves: int = 3
+    type_name: ClassVar[str] = "warped_ridged_multifractal"
+
+    def basis(self, u, v):
+        if self.warp_octaves < 1:
+            raise ValueError("Warp octaves must be at least one")
+        wu = _perlin_basis(u, v, self.warp_frequency, self.warp_octaves,
+                           .5, 2.0, 0.0, 0.0, self.seed + 101)
+        wv = _perlin_basis(u, v, self.warp_frequency, self.warp_octaves,
+                           .5, 2.0, 0.0, 0.0, self.seed + 211)
+        return super().basis(u + self.warp_amplitude * wu,
+                             v + self.warp_amplitude * wv)
+
 def _rotated(u, v, center_u, center_v, orientation):
     du, dv = u - center_u, v - center_v
     c, s = np.cos(orientation), np.sin(orientation)
@@ -435,6 +454,7 @@ COMPONENT_TYPES = {c.type_name: c for c in (
     PerlinNoiseComponent, ThresholdedNoiseComponent, MaskedNoiseComponent, WaveletComponent,
     VoronoiNoiseComponent, FractalBrownianMotionComponent,
     RidgedMultifractalComponent, TurbulenceNoiseComponent, DomainWarpedNoiseComponent,
+    WarpedRidgedMultifractalComponent,
     AnisotropicGaussianComponent, LineComponent, StepEdgeComponent,
     DifferenceOfGaussiansComponent, PolynomialTrendComponent, RadialWaveComponent,
     SpiralWaveComponent, SparseImpulseComponent, BinaryPrimitiveComponent, SimpleConstantComponent,

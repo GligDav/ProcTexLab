@@ -10,11 +10,13 @@ from procedural_texture_kernel import (AnisotropicGaussianComponent, BinaryPrimi
     FractalBrownianMotionComponent, LineComponent, MaskedNoiseComponent, PolynomialTrendComponent,
     RadialWaveComponent, RidgedMultifractalComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent, SimpleConstantComponent)
+    VoronoiNoiseComponent, WarpedRidgedMultifractalComponent,
+    SimpleConstantComponent)
 from procedural_texture_kernel.coordinates import coordinate_grid, coordinate_grid_region
 from procedural_texture_kernel.metrics import calculate_metrics
 from procedural_texture_kernel.fitting import (
-    _adaptive_noise_frequencies, _local_structure_estimate,
+    _adaptive_noise_frequencies, _diverse_candidate_shortlist,
+    _local_structure_estimate,
     _perlin_candidates, _refine_model_parameters, _refine_new_atom)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
 
@@ -69,6 +71,7 @@ def test_new_component_serialization(component):
     VoronoiNoiseComponent(seed=3), FractalBrownianMotionComponent(seed=3),
     RidgedMultifractalComponent(seed=3), TurbulenceNoiseComponent(seed=3),
     DomainWarpedNoiseComponent(seed=3), AnisotropicGaussianComponent(), LineComponent(),
+    WarpedRidgedMultifractalComponent(seed=3),
     StepEdgeComponent(), DifferenceOfGaussiansComponent(), PolynomialTrendComponent(),
     RadialWaveComponent(), SpiralWaveComponent(), SparseImpulseComponent(seed=3),
     BinaryPrimitiveComponent(), SimpleConstantComponent(), ThresholdedNoiseComponent(seed=3),
@@ -96,6 +99,9 @@ def test_component_variants_and_seed_changes():
         seed=4, rotation=.6, anisotropy=2.5, ridge_power=4).basis(u, v)
     assert np.min(directional) >= -1 and np.max(directional) <= 1
     assert not np.allclose(isotropic, directional)
+    warped = WarpedRidgedMultifractalComponent(
+        seed=4, rotation=.6, anisotropy=2.5, warp_amplitude=.3).basis(u, v)
+    assert not np.allclose(directional, warped)
     for shape in ("disk", "box", "ring", "checker"):
         values = BinaryPrimitiveComponent(shape=shape).basis(u, v)
         assert set(np.unique(values)) <= {0.0, 1.0}
@@ -123,25 +129,30 @@ def test_masked_noise_complement_partitions_the_same_detail_field():
     assert np.allclose(normal.basis(u, v) + inverse.basis(u, v), detail)
     assert not np.allclose(normal.basis(u, v), inverse.basis(u, v))
 
-@pytest.mark.parametrize("family, component", [
-    ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
-    ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
-    ("thresholded_noise", ThresholdedNoiseComponent(
-        .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
-    ("ridged_multifractal", RidgedMultifractalComponent(
-        .2, frequency=2, octaves=4, ridge_power=3, seed=0)),
-    ("masked_noise", MaskedNoiseComponent(
-        .2, mask_frequency=2, mask_seed=0, detail_frequency=8,
-        detail_seed=1009)),
-])
-def test_new_component_families_can_be_fitted(family, component):
-    image = ProceduralTextureModel(.5, components=[component]).evaluate(24, 24)
-    config = FitConfig(component_families=(family,), max_components=1,
-                       max_iterations=5, fitting_resolution=None, seed=0,
-                       decomposition_bands=1)
-    result = TextureFitter(config).fit(image)
-    assert len(result.model.components) == 1
-    assert result.model.components[0].type_name == family
+def test_new_component_families_can_be_fitted():
+    cases = (
+        ("perlin_noise", PerlinNoiseComponent(.2, 4, 3, seed=1)),
+        ("wavelet", WaveletComponent(.3, .5, .5, .1, .1)),
+        ("thresholded_noise", ThresholdedNoiseComponent(
+            .25, frequency=2, octaves=4, threshold=0, edge_width=.08, seed=0)),
+        ("ridged_multifractal", RidgedMultifractalComponent(
+            .2, frequency=2, octaves=4, ridge_power=3, seed=0)),
+        ("warped_ridged_multifractal", WarpedRidgedMultifractalComponent(
+            .2, frequency=2, octaves=4, ridge_power=3,
+            warp_amplitude=.2, seed=0)),
+        ("masked_noise", MaskedNoiseComponent(
+            .2, mask_frequency=2, mask_seed=0, detail_frequency=8,
+            detail_seed=1009)),
+    )
+    for family, component in cases:
+        image = ProceduralTextureModel(
+            .5, components=[component]).evaluate(24, 24)
+        config = FitConfig(component_families=(family,), max_components=1,
+                           max_iterations=5, fitting_resolution=None, seed=0,
+                           decomposition_bands=1)
+        result = TextureFitter(config).fit(image)
+        assert len(result.model.components) == 1, family
+        assert result.model.components[0].type_name == family
 
 @pytest.mark.parametrize("initial,target_atom", [
     (AnisotropicGaussianComponent(.4, .35, .45, .12, .06, .2),
@@ -389,6 +400,16 @@ def test_noise_candidate_seed_bank_is_deterministic_and_bounded():
     assert 1 <= len(first) <= 6
     assert {atom.seed for atom in first} == {0, 1}
     assert [atom.to_dict() for atom in first] == [atom.to_dict() for atom in second]
+
+
+def test_candidate_shortlist_preserves_family_diversity():
+    candidates = [(10.0, SinusoidComponent()),
+                  (9.0, SinusoidComponent(frequency_u=2)),
+                  (1.0, PerlinNoiseComponent()),
+                  (.5, WaveletComponent())]
+    selected = _diverse_candidate_shortlist(candidates, 3)
+    assert {atom.type_name for _, atom in selected} == {
+        "sinusoid", "perlin_noise", "wavelet"}
 
 def test_masked_noise_candidates_cover_both_regions():
     y, x = np.indices((24, 28))

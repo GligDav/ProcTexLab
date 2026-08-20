@@ -21,7 +21,8 @@ SUPPORTED_COMPONENT_FAMILIES = (
     "masked_noise", "wavelet",
     "shader_graph",
     "voronoi_noise", "fbm", "ridged_multifractal", "turbulence_noise",
-    "domain_warped_noise", "anisotropic_gaussian", "line", "step_edge",
+    "domain_warped_noise", "warped_ridged_multifractal",
+    "anisotropic_gaussian", "line", "step_edge",
     "dog_log", "polynomial_trend", "radial_wave", "spiral_wave",
     "sparse_impulse", "binary_primitive", "simple_constant"
 )

@@ -19,6 +19,7 @@ ATOM_LABELS = {
     "voronoi_noise": "Voronoi noise", "fbm": "Fractal Brownian motion (fBm)",
     "ridged_multifractal": "Ridged multifractal", "turbulence_noise": "Turbulence noise",
     "domain_warped_noise": "Domain-warped noise",
+    "warped_ridged_multifractal": "Warped ridged multifractal",
     "anisotropic_gaussian": "Anisotropic Gaussian", "line": "Line / ridge / bar",
     "step_edge": "Step / sigmoid edge", "dog_log": "DoG / LoG",
     "polynomial_trend": "Polynomial trend", "radial_wave": "Radial wave",

@@ -13,7 +13,8 @@ from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     PerlinNoiseComponent, PolynomialTrendComponent, RadialWaveComponent,
     RidgedMultifractalComponent, SinusoidComponent, SparseImpulseComponent,
     SpiralWaveComponent, StepEdgeComponent, ThresholdedNoiseComponent, TurbulenceNoiseComponent,
-    VoronoiNoiseComponent, WaveletComponent, SimpleConstantComponent)
+    VoronoiNoiseComponent, WarpedRidgedMultifractalComponent, WaveletComponent,
+    SimpleConstantComponent)
 from .coordinates import coordinate_grid
 from .decomposition import create_decomposition
 from .model import ProceduralTextureModel
@@ -31,6 +32,7 @@ _DETAIL_FAMILIES = frozenset({
 })
 _STRUCTURE_FAMILIES = frozenset({
     "thresholded_noise", "domain_warped_noise", "ridged_multifractal",
+    "warped_ridged_multifractal",
     "masked_noise",
     "shader_graph",
     "voronoi_noise", "fbm", "anisotropic_gaussian", "gaussian_rbf",
@@ -322,6 +324,15 @@ def _perlin_candidates(residual, config, u, v):
             for power in (1.5, 3.0)
             for rotation in (0.0, np.pi / 4.0)
         )
+    if "warped_ridged_multifractal" in config.component_families:
+        candidates.extend(
+            WarpedRidgedMultifractalComponent(
+                frequency=frequency, ridge_power=3.0, rotation=rotation,
+                warp_amplitude=.18, warp_frequency=max(1.0, frequency / 3.0),
+                seed=seed)
+            for frequency in frequencies for seed in seeds
+            for rotation in (0.0, np.pi / 4.0)
+        )
     if "thresholded_noise" in config.component_families:
         positive_coverage = float(np.mean(residual > 0))
         coverages = tuple(np.unique(np.clip((positive_coverage, .35, .65), .05, .95)))
@@ -429,13 +440,26 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
             mask_edge_width=p[6], detail_frequency=p[7],
             detail_offset_u=p[8], detail_offset_v=p[9])
     elif isinstance(atom, RidgedMultifractalComponent):
-        x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
-              atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]
-        bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
-                  (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4)]
-        def make(p): return replace(
-            atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
-            ridge_offset=p[4], ridge_power=p[5], rotation=p[6], anisotropy=p[7])
+        if isinstance(atom, WarpedRidgedMultifractalComponent):
+            x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+                  atom.ridge_offset, atom.ridge_power, atom.rotation,
+                  atom.anisotropy, atom.warp_amplitude, atom.warp_frequency]
+            bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                      (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4),
+                      (0, .75), (.25, min(16.0, frequency_upper))]
+            def make(p): return replace(
+                atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
+                offset_v=p[3], ridge_offset=p[4], ridge_power=p[5],
+                rotation=p[6], anisotropy=p[7], warp_amplitude=p[8],
+                warp_frequency=p[9])
+        else:
+            x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
+                  atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]
+            bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
+                      (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4)]
+            def make(p): return replace(
+                atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
+                ridge_offset=p[4], ridge_power=p[5], rotation=p[6], anisotropy=p[7])
     elif isinstance(atom, DomainWarpedNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.warp_amplitude, atom.warp_frequency]
@@ -543,6 +567,28 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
     refined = make(result.x)
     return refined if np.isfinite(result.fun) and result.fun <= initial_loss else atom
 
+
+def _diverse_candidate_shortlist(initialized: list[tuple[float, object]],
+                                 limit: int) -> list[tuple[float, object]]:
+    """Keep the strongest member of each family before filling by score."""
+    ordered = sorted(initialized, key=lambda item: item[0], reverse=True)
+    representatives = []
+    represented = set()
+    for item in ordered:
+        family = item[1].type_name
+        if family not in represented:
+            representatives.append(item)
+            represented.add(family)
+    selected = representatives[:limit]
+    selected_ids = {id(item[1]) for item in selected}
+    for item in ordered:
+        if len(selected) >= limit:
+            break
+        if id(item[1]) not in selected_ids:
+            selected.append(item)
+            selected_ids.add(id(item[1]))
+    return selected
+
 def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
               band_count: int, progress_callback=None,
               cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
@@ -603,8 +649,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                 atom.amplitude, score = _project(atom, residual, u, v)
             initialized.append((score, atom))
         if weights.local_structure > 0:
-            initialized = sorted(initialized, key=lambda item: item[0], reverse=True)[
-                :config.local_structure_candidate_limit]
+            initialized = _diverse_candidate_shortlist(
+                initialized, config.local_structure_candidate_limit)
         scored = []
         for score, atom in initialized:
             # Pixel correlation initializes and, for the expensive local
