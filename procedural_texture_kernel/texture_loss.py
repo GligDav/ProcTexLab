@@ -15,10 +15,13 @@ class TextureLossWeights:
     mse: float = 1.0
     local_structure: float = 0.0
     local_contrast: float = 0.0
+    absolute_spectrum: float = 0.0
+    oriented_spectrum: float = 0.0
 
     def __post_init__(self):
         values = (self.spectrum, self.histogram, self.autocorrelation, self.gradient,
-                  self.mse, self.local_structure, self.local_contrast)
+                  self.mse, self.local_structure, self.local_contrast,
+                  self.absolute_spectrum, self.oriented_spectrum)
         if not all(np.isfinite(values)) or any(value < 0 for value in values):
             raise ValueError("texture loss weights must be finite and non-negative")
         if sum(values) <= 0:
@@ -36,6 +39,48 @@ def _spectrum_features(image: np.ndarray) -> list[np.ndarray]:
             break
         current = gaussian_filter(current, 1.0)[::2, ::2]
     return features
+
+
+_ABSOLUTE_SPECTRUM_EDGES = np.array((0.0, .125, .25, .5, .75,
+                                     np.sqrt(2.0) + 1e-12))
+
+
+def _absolute_spectrum_energy(image: np.ndarray) -> np.ndarray:
+    """Return window-corrected absolute energy in Nyquist-relative bands."""
+    height, width = image.shape
+    window = np.outer(np.hanning(height), np.hanning(width))
+    window_power = max(float(np.mean(window * window)), np.finfo(float).tiny)
+    transformed = np.fft.fft2((image - np.mean(image)) * window)
+    power = np.abs(transformed) ** 2 / (image.size ** 2 * window_power)
+    fy = np.fft.fftfreq(height)[:, None]
+    fx = np.fft.fftfreq(width)[None, :]
+    radius = np.hypot(fy, fx) / .5
+    return np.asarray([np.sum(power[(radius >= lower) & (radius < upper)])
+                       for lower, upper in zip(_ABSOLUTE_SPECTRUM_EDGES[:-1],
+                                               _ABSOLUTE_SPECTRUM_EDGES[1:])],
+                      dtype=np.float64)
+
+
+def _oriented_spectrum_energy(image: np.ndarray, orientations: int = 8) -> np.ndarray:
+    """Return absolute energy for radial bands split into orientation wedges."""
+    height, width = image.shape
+    window = np.outer(np.hanning(height), np.hanning(width))
+    window_power = max(float(np.mean(window * window)), np.finfo(float).tiny)
+    transformed = np.fft.fft2((image - np.mean(image)) * window)
+    power = np.abs(transformed) ** 2 / (image.size ** 2 * window_power)
+    fy = np.fft.fftfreq(height)[:, None]
+    fx = np.fft.fftfreq(width)[None, :]
+    radius = np.hypot(fy, fx) / .5
+    angle = np.mod(np.arctan2(fy, fx), np.pi)
+    wedge = np.minimum((angle * orientations / np.pi).astype(int), orientations - 1)
+    result = np.zeros((len(_ABSOLUTE_SPECTRUM_EDGES) - 1, orientations))
+    for band, (lower, upper) in enumerate(zip(_ABSOLUTE_SPECTRUM_EDGES[:-1],
+                                               _ABSOLUTE_SPECTRUM_EDGES[1:])):
+        radial_mask = (radius >= lower) & (radius < upper)
+        for orientation in range(orientations):
+            result[band, orientation] = np.sum(
+                power[radial_mask & (wedge == orientation)])
+    return result
 
 def _histogram_feature(image: np.ndarray, value_range: tuple[float, float],
                        bins: int = 64) -> np.ndarray:
@@ -191,6 +236,13 @@ class TextureLoss:
         low, high = float(np.min(self.reference)), float(np.max(self.reference))
         self._histogram_range = (low, high) if high > low else (low - .5, high + .5)
         self._spectrum = _spectrum_features(self.reference)
+        self._absolute_spectrum = _absolute_spectrum_energy(self.reference)
+        self._absolute_spectrum_epsilon = max(
+            float(np.sum(self._absolute_spectrum)) * 1e-8, 1e-16)
+        self._oriented_spectrum = _oriented_spectrum_energy(self.reference)
+        self._oriented_spectrum_epsilon = max(
+            float(np.sum(self._oriented_spectrum)) * 1e-8
+            / self._oriented_spectrum.size, 1e-16)
         self._histogram = _histogram_feature(self.reference, self._histogram_range)
         self._autocorrelation = _autocorrelation_feature(self.reference)
         self._gradient, self._gradient_normalizers = _gradient_feature(self.reference)
@@ -212,6 +264,16 @@ class TextureLoss:
             raise ValueError("candidate must be finite and match the reference shape")
         spectra = _spectrum_features(image)
         spectrum = float(np.mean([np.mean((a-b) ** 2) for a, b in zip(self._spectrum, spectra)]))
+        candidate_energy = _absolute_spectrum_energy(image)
+        log_ratio = np.log10((candidate_energy + self._absolute_spectrum_epsilon)
+                             / (self._absolute_spectrum
+                                + self._absolute_spectrum_epsilon)) / 8.0
+        absolute_spectrum = float(np.mean(log_ratio * log_ratio))
+        candidate_oriented = _oriented_spectrum_energy(image)
+        oriented_log_ratio = np.log10(
+            (candidate_oriented + self._oriented_spectrum_epsilon)
+            / (self._oriented_spectrum + self._oriented_spectrum_epsilon)) / 8.0
+        oriented_spectrum = float(np.mean(oriented_log_ratio * oriented_log_ratio))
         histogram = float(np.mean(np.abs(
             self._histogram - _histogram_feature(image, self._histogram_range))))
         autocorrelation = float(np.mean((self._autocorrelation - _autocorrelation_feature(image)) ** 2))
@@ -230,7 +292,10 @@ class TextureLoss:
             local_structure = float(np.mean(
                 (self._local_structure - candidate_structure) ** 2))
         mse = float(np.mean((self.reference - image) ** 2))
-        return {"spectrum_loss": spectrum, "histogram_loss": histogram,
+        return {"spectrum_loss": spectrum,
+                "absolute_spectrum_loss": absolute_spectrum,
+                "oriented_spectrum_loss": oriented_spectrum,
+                "histogram_loss": histogram,
                 "autocorrelation_loss": autocorrelation, "gradient_loss": gradient,
                 "local_structure_loss": local_structure,
                 "local_contrast_loss": local_contrast,
@@ -239,6 +304,10 @@ class TextureLoss:
     def evaluate(self, candidate: np.ndarray) -> tuple[float, dict[str, float]]:
         parts = self.components(candidate)
         weighted = (self.weights.spectrum * parts["spectrum_loss"]
+                    + self.weights.absolute_spectrum
+                    * parts["absolute_spectrum_loss"]
+                    + self.weights.oriented_spectrum
+                    * parts["oriented_spectrum_loss"]
                     + self.weights.histogram * parts["histogram_loss"]
                     + self.weights.autocorrelation * parts["autocorrelation_loss"]
                     + self.weights.gradient * parts["gradient_loss"]
@@ -248,7 +317,9 @@ class TextureLoss:
         total_denominator = (self.weights.spectrum + self.weights.histogram
                              + self.weights.autocorrelation + self.weights.gradient
                              + self.weights.mse + self.weights.local_structure
-                             + self.weights.local_contrast)
+                             + self.weights.local_contrast
+                             + self.weights.absolute_spectrum)
+        total_denominator += self.weights.oriented_spectrum
         total = float(weighted / total_denominator)
         return total, {"texture_loss": total, **parts}
 

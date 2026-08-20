@@ -19,9 +19,9 @@ from procedural_texture_kernel import FitConfig, TextureFitter, load_image
 
 image = load_image("roughness.png")
 result = TextureFitter(FitConfig(
-    max_components=8,
-    max_iterations=40,
-    fitting_resolution=96,
+    max_components=12,
+    max_iterations=60,
+    fitting_resolution=192,
     decomposition_bands=5,
     seed=0,
 )).fit(image)
@@ -39,7 +39,7 @@ result.save_json("fit.json")
 ## Architecture
 
 - `coordinates.py` owns the one coordinate convention and cached grid construction.
-- `components.py` defines typed, serializable sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
+- `components.py` defines typed, serializable Fourier bundles, sinusoid, Gabor, Gaussian RBF, seeded Perlin-noise, and wavelet atoms.
 - `model.py` evaluates and serializes the bias/plane plus sparse atom sum.
 - `fitting.py` contains spectral analysis, residual-based candidate proposals, statistical selection, and bounded atom refinement.
 - `texture_loss.py` implements the weighted multi-scale spectrum, histogram, autocorrelation, gradient-statistics, and MSE objective.
@@ -62,13 +62,31 @@ objective. Extracted features and effective weights are recorded in each entry o
 `FitResult.metadata["bands"]`. Set `adaptive_texture_weights=False` to apply the
 manual `spectrum_weight`, `histogram_weight`, `autocorrelation_weight`, and
 `gradient_weight` values to every band. Their defaults remain `1.0`, `0.5`,
-`0.75`, and `0.5`; `mse_weight` defaults to `1.0`. Losses are weighted means.
+`0.75`, and `0.5`; `mse_weight` defaults to `1.0`. The additional absolute
+band-energy spectrum term defaults to `0.25` and prevents normalized spectral
+shape from hiding an overall contrast or high-frequency deficit. Losses are
+weighted means.
+
+An orientation-aware absolute spectrum term also defaults to `0.25`. It splits
+each radial band into eight unoriented Fourier wedges, so matching radial energy
+with the wrong dominant direction is penalized.
 
 Important `FitConfig` fields are `max_components`, nonlinear `max_iterations`, `fitting_resolution`, enabled `component_families`, FFT candidate count and frequency bounds, `min_improvement`, adaptive/manual texture-loss controls, and `fit_plane`. `decomposition_method` defaults to `"laplacian"`; `decomposition_bands` defaults to 5, and `decomposition_base_sigma` defaults to 1.0 pixels. Successive Gaussian cutoffs double in sigma (approximately octave-spaced), with Laplacian differences plus the final low-pass residual summing to the input within floating-point tolerance. Set the band count to 1 for identity decomposition. `ridge` stabilizes the initial DC/plane estimate. Defaults are bounded and deterministic. `seed` is serialized into metadata.
 
+`max_frequency=None` selects 45% of the smaller fitting dimension, retaining an
+anti-aliasing margin. An explicit cycle-per-UV value still overrides it. Input
+downsampling applies a Gaussian anti-aliasing filter before resampling.
+
+Independent decomposition bands can be fitted concurrently with `band_workers`.
+The public API defaults to one worker; the development GUI defaults to three.
+Threaded results retain band order and deterministic model composition, while
+progress is aggregated across bands. Values above the band count are harmlessly
+capped. Because numerical libraries may also use internal threads, increasing
+the setting beyond the available physical cores can reduce performance.
+
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
-Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 2); at most three noise frequencies are retained per iteration.
+Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration. The `spectral_noise` candidate packs the strongest unique residual FFT modes into one atom; `spectral_noise_modes` controls its bounded mode count (default 32).
 
 `masked_noise` is a deliberately constrained compositional atom: it applies independent detail noise to either side of a coherent mask without introducing a general shader-graph search space. Both mask sides are proposed, while mask shape and detail placement are refined continuously.
 
@@ -80,8 +98,10 @@ Set `detail_refinement=True` to run an adaptive high-frequency residual pass aft
 the normal multiband fit. It activates only when the fitting-resolution
 `high_frequency_ratio` is below `detail_hf_ratio_threshold`, high-pass filters
 the signed reconstruction residual, and fits a separate budget of detail atoms.
-The candidate is retained only when both absolute HF-energy error and full-image
-MSE improve. Configuration includes `detail_max_components`,
+The candidate must improve absolute HF-energy error. When `mse_weight` is
+positive it must also avoid worsening full-image MSE; an MSE weight of zero
+removes MSE from both detail fitting and this final acceptance gate.
+Configuration includes `detail_max_components`,
 `detail_min_frequency`, `detail_min_improvement`, `detail_base_sigma`, and
 `detail_component_families`. Detailed before/after diagnostics and the acceptance
 decision are stored in `result.metadata["detail_refinement"]`.
@@ -92,7 +112,13 @@ after every `amplitude_refit_interval` accepted atoms and once at the end when
 needed. A refitted state is retained only if the complete band texture objective
 does not increase. Each decision is recorded in the band iteration metadata.
 
-The fitter includes Fourier, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, explicit tiling constraints, LASSO, simplex noise, and GPU acceleration remain future extensions.
+With `joint_parameter_refinement=True`, the final atoms in each band are revisited
+by coordinate-descent nonlinear optimization after greedy construction. The
+default performs one pass over the eight most recently accepted atoms; configure
+`parameter_refinement_passes` and `parameter_refinement_atom_limit` to trade fit
+quality for runtime. Every pass and accepted replacement is recorded per band.
+
+The fitter includes individual Fourier modes, compact spectral-noise bundles, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Spectral bundles target the high-frequency energy that a small atom budget would otherwise miss, while using integer FFT modes so the result tiles over the source UV interval. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, LASSO, simplex noise, and GPU acceleration remain future extensions.
 
 ## Coordinates and procedural model
 
@@ -101,14 +127,16 @@ Pixels use normalized half-open coordinates: `u = column / width`, `v = row / he
 The component types are:
 
 - `SinusoidComponent`: amplitude, U/V frequency vector, phase.
+- `SpectralNoiseComponent`: amplitude plus a deterministic weighted bundle of U/V Fourier frequencies and phases. Its basis is RMS-normalized so candidate projection controls the overall contrast.
 - `GaborComponent`: amplitude, center, two Gaussian widths, carrier frequency, orientation, phase.
 - `GaussianRBFComponent`: amplitude, center, Gaussian width.
 - `PerlinNoiseComponent`: amplitude, base frequency, octave count, persistence, lacunarity, UV offset, and deterministic seed. Its normalized fractal gradient-noise basis continues procedurally outside the source UV range.
 - `ThresholdedNoiseComponent`: a rotated fBm field remapped through a smooth threshold, with controllable threshold and edge width for coherent high-contrast regions.
 - `MaskedNoiseComponent`: independent detail noise restricted to either side of a smooth thresholded-noise region mask.
+- `WarpedRidgeDetailComponent`: independent fine noise restricted to either side of a smooth mask derived from anisotropic, domain-warped multifractal ridges.
 - `ShaderGraphComponent`: an embedded validated scalar DAG; currently fitted as a coherent mask mixing two independently seeded detail fields.
 - `WaveletComponent`: amplitude, center, anisotropic U/V scales, and orientation. It uses a localized 2D Mexican-hat (Ricker) basis for residual blobs, spots, and band-pass detail.
-- Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, and `DomainWarpedNoiseComponent`. Ridged multifractals fold every octave independently and expose ridge offset/power, rotation, and anisotropy for vein-like structures.
+- Noise families: `VoronoiNoiseComponent`, `FractalBrownianMotionComponent`, `RidgedMultifractalComponent`, `TurbulenceNoiseComponent`, `DomainWarpedNoiseComponent`, and `WarpedRidgedMultifractalComponent`. Ridged multifractals fold every octave independently and expose ridge offset/power, rotation, and anisotropy for vein-like structures. The warped-ridged variant bends those anisotropic ridges with an independently seeded smooth vector field.
 - Geometric/local atoms: `AnisotropicGaussianComponent`, `LineComponent`, `StepEdgeComponent`, `DifferenceOfGaussiansComponent` (`dog` or `log` mode), and `BinaryPrimitiveComponent` (disk, box, ring, or checker).
 - Structured/global atoms: `PolynomialTrendComponent`, `RadialWaveComponent`, `SpiralWaveComponent`, and `SparseImpulseComponent`.
 
@@ -161,6 +189,12 @@ It loads common raster formats, edits the principal settings, shows progress, an
 After a fit, the **Spectrum** button opens the full-resolution target/result
 diagnostics: absolute radial PSD curves on a logarithmic scale, per-band absolute
 and normalized energies, and the combined high-frequency energy ratio.
+
+The adjacent **Measurements** button opens complementary full-resolution
+diagnostics. Its tabs compare global contrast and gradient tails, local contrast
+at four Gaussian scales, strong-edge density, and absolute directional Fourier
+energy in eight orientation wedges. All ratios are reported as result divided by
+target so that deficits and excesses are directly visible.
 
 To compare two same-sized rasters and interactively calibrate the four objective
 weights, run:
@@ -224,6 +258,69 @@ pytest
 ```
 
 Tests cover all atom evaluations, seeded Perlin determinism, wavelet localization, model composition and JSON round trips, coordinates, metrics, image normalization, deterministic synthetic fitting, constant fields, and non-square rasters.
+
+## Improvement ideas
+
+The current reconstruction is close enough that further work should focus on
+procedural generalization, resolution, and runtime rather than simply adding
+more atom families. Suggested remaining work, roughly in priority order, is:
+
+1. **Define and measure non-memorizing texture similarity.** A zero MSE weight
+   only removes the explicit pixel-error term; it does not make an exact copy a
+   bad solution. An exact copy also minimizes spectrum, histogram,
+   autocorrelation, gradient, local-contrast, and local-structure discrepancies.
+   Add continuation-aware measurements such as statistics over several UV
+   windows, random translations, phase-scrambled controls, patch-distribution
+   distances, and held-out crops. Model complexity and repetition should be
+   reported alongside source-domain loss.
+2. **Finish the zero-MSE audit.** High-frequency refinement now inherits
+   `mse_weight` and disables its MSE acceptance gate at zero, but several
+   proposal mechanisms remain deliberately pixel aligned: the initial plane,
+   residual amplitude projection, joint least-squares amplitude proposals, FFT
+   phases, and per-band residual fitting. Their proposals are accepted using the
+   configured texture objective, yet they strongly bias the search toward the
+   source realization. Experiment with phase-free or randomized-phase spectral
+   proposals, translation-ensemble objectives, statistic-based amplitude
+   initialization, and an explicit `spatial_alignment_weight` separate from
+   MSE. Add metadata and tests that distinguish proposal scoring from final
+   objective scoring.
+3. **Improve high-resolution fitting performance.** Profile feature extraction,
+   candidate evaluation, basis synthesis, and nonlinear refinement separately.
+   Cache reusable bases and target features, evaluate candidates in batches,
+   FFT-accelerate localized correlation, avoid recomputing the complete model
+   for single-atom trials, and use coarse-to-fine parameter refinement. After
+   the CPU path is measured, consider process-level parallelism or array/GPU
+   backends. This should allow a larger `fitting_resolution` without changing
+   fitting semantics.
+4. **Use a progressive-resolution schedule.** Fit structure at low resolution,
+   transfer the model to successively larger rasters, and unlock finer bands and
+   higher frequencies at each stage. Re-optimize only parameters affected by a
+   new stage. This should be cheaper and more stable than running every family
+   against the full-resolution raster from the start.
+5. **Add sparse model selection and consolidation.** Penalize component count
+   and spectral-bundle mode count, prune atoms whose removal does not harm the
+   statistical objective, merge redundant atoms, and compare LASSO/elastic-net
+   amplitude refits with the current ridge solve. This is especially important
+   for preventing `SpectralNoiseComponent` from becoming a compact raster
+   encoding rather than a procedural description.
+6. **Strengthen continuation and boundary behavior.** Add optional periodic seam
+   loss, boundary-conditioned candidate generation, and diagnostics over UV
+   extents larger than one. Separate explicitly tileable components from
+   components intended to vary indefinitely, and test both behaviors at several
+   output resolutions.
+7. **Expand the multiscale representation where diagnostics justify it.** Useful
+   candidates include steerable or wavelet-packet decompositions, locally
+   modulated spectral noise, improved conditional detail masks, broader adaptive
+   seed search, and cross-band dependencies. Add a family only when a measured
+   residual statistic cannot be represented efficiently by the existing warped
+   ridge, masked-detail, and spectral-bundle atoms.
+
+The MSE issue should therefore not be treated only as a weight-propagation bug.
+With all discrepancy losses minimized by the source image, the optimizer has no
+reason to prefer a statistically equivalent but different realization. A future
+"texture synthesis" mode should explicitly reward generalization or phase
+freedom, while a separate "reconstruction" mode can retain the current
+pixel-aligned proposals.
 
 ## Current limitations
 

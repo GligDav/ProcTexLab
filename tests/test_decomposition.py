@@ -29,6 +29,8 @@ def test_band_aware_candidate_roles_follow_pyramid_order():
     assert "wavelet" in high and "thresholded_noise" not in high
     assert "wavelet" in middle and "thresholded_noise" in middle
     assert "thresholded_noise" in low and "wavelet" not in low
+    assert "warped_ridged_multifractal" in low
+    assert "warped_ridge_detail" in low
 
 
 def test_band_roles_preserve_single_explicit_family_and_can_be_disabled():
@@ -80,7 +82,8 @@ def test_manual_band_weights_remain_available():
     assert result.metadata["objective"]["weight_mode"] == "manual"
     assert all(band["weights"] == {"spectrum": 2, "histogram": 3,
                                    "autocorrelation": 4, "gradient": 5, "mse": 6,
-                                   "local_structure": 0, "local_contrast": 0}
+                                   "local_structure": 0, "local_contrast": 0,
+                                   'absolute_spectrum': 0.25, 'oriented_spectrum': 0.25}
                for band in result.metadata["bands"])
     assert all("features" not in band for band in result.metadata["bands"])
 
@@ -90,6 +93,30 @@ def test_decomposition_configuration_validation():
         FitConfig(decomposition_bands=0)
     with pytest.raises(ValueError, match="unsupported decomposition"):
         create_decomposition("unknown")
+
+
+@pytest.mark.parametrize("value", [0, -1, True, 1.5])
+def test_band_worker_validation(value):
+    with pytest.raises(ValueError, match="band_workers"):
+        FitConfig(band_workers=value)
+
+
+def test_parallel_band_fit_preserves_order_results_and_monotonic_progress():
+    y, x = np.indices((20, 24))
+    image = .5 + .15 * np.sin(2 * np.pi * x / 6)
+    common = dict(decomposition_bands=3, max_components=1,
+                  max_iterations=3, fitting_resolution=None,
+                  component_families=("sinusoid",),
+                  joint_parameter_refinement=False)
+    sequential = TextureFitter(FitConfig(**common, band_workers=1)).fit(image)
+    progress = []
+    parallel = TextureFitter(FitConfig(**common, band_workers=2)).fit(
+        image, progress_callback=lambda _stage, value, _message: progress.append(value))
+    assert np.allclose(parallel.reconstruction, sequential.reconstruction)
+    assert [band["band"] for band in parallel.metadata["bands"]] == [1, 2, 3]
+    assert parallel.metadata["band_workers"] == 2
+    band_progress = progress[:progress.index(1.0) + 1]
+    assert band_progress == sorted(band_progress)
 
 
 def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
@@ -107,6 +134,24 @@ def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():
     assert detail["components"] == 1
     assert detail["after_hf_absolute_error"] < detail["before_hf_absolute_error"]
     assert detail["after_mse"] <= detail["before_mse"]
+    assert detail["mse_weight"] == 1.0
+    assert detail["mse_gate_enabled"]
+
+
+def test_high_frequency_refinement_respects_zero_mse_weight():
+    y, x = np.indices((48, 48))
+    image = .5 + .2 * np.sin(2 * np.pi * x / 4)
+    result = TextureFitter(FitConfig(
+        decomposition_bands=1, max_components=0, fitting_resolution=None,
+        component_families=("sinusoid",), max_frequency=20,
+        mse_weight=0, detail_refinement=True, detail_max_components=1,
+        detail_min_frequency=8, detail_hf_ratio_threshold=.9,
+        max_iterations=20, min_improvement=0)).fit(image)
+    detail = result.metadata["detail_refinement"]
+    assert detail["attempted"]
+    assert detail["mse_weight"] == 0
+    assert not detail["mse_gate_enabled"]
+    assert detail["mse_acceptable"]
 
 
 def test_high_frequency_refinement_skips_when_threshold_is_met():

@@ -18,6 +18,10 @@ def test_calibrator_declares_mse_weight():
     assert ("MSE", "mse", "mse_loss", 1.0) in WEIGHTS
     assert ("Local structure", "local_structure", "local_structure_loss", 0.0) in WEIGHTS
     assert ("Local contrast", "local_contrast", "local_contrast_loss", 0.0) in WEIGHTS
+    assert ("Absolute spectrum", "absolute_spectrum",
+            "absolute_spectrum_loss", 0.25) in WEIGHTS
+    assert ("Oriented spectrum", "oriented_spectrum",
+            "oriented_spectrum_loss", 0.25) in WEIGHTS
 
 
 def test_evaluate_images_rejects_different_dimensions():
