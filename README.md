@@ -12,6 +12,16 @@ python -m pip install -e ".[dev]"
 
 The runtime dependencies are NumPy, SciPy, and Pillow. Tkinter is normally included with desktop Python distributions.
 
+For optional NVIDIA CUDA 12 candidate batching, install the GPU extra into the
+same virtual environment (the base install does not pull in CUDA packages):
+
+```bash
+python -m pip install -e ".[dev,gpu]"
+```
+
+For a different CUDA major version, install the matching official CuPy wheel
+instead of `cupy-cuda12x`.
+
 ## Public API
 
 ```python
@@ -98,6 +108,40 @@ The optimizer avoids calculating zero-weight texture features during inner
 probes. Full loss components are still calculated at recorded iterations and by
 `calculate_texture_loss`, so public diagnostics and fit decisions are unchanged.
 
+Set `compute_backend="cupy"` (the **Backend** selector in the development GUI)
+to initialize CuPy and replace compatible NumPy/SciPy work with its CUDA
+equivalents. Initialization verifies a CUDA device with a real allocation and
+kernel reduction before fitting starts; a missing/incompatible CuPy or CUDA
+installation raises a clear error instead of silently changing the requested
+backend. Image resizing and Gaussian-pyramid construction use CuPy and
+`cupyx.scipy.ndimage`; supported candidate families then remain batched on the
+device for array operations, reductions, FFTs, and loss evaluation.
+Component and model grid evaluation also select their array namespace from the
+provided coordinate arrays. Passing CuPy `u`/`v` grids therefore returns CuPy
+arrays without changing component parameters or serialization. Seeded noise
+keeps deterministic permutation generation on the CPU and transfers only that
+small lookup table; its per-pixel work runs on the GPU.
+
+`gpu_batch_size` defaults to 16 and bounds the main device allocation,
+approximately `batch_size * height * width * 8` bytes per resident float64
+array. Several arrays coexist, so start conservatively at high resolutions and
+increase while monitoring VRAM. The target and coordinate grids stay resident
+for a complete band. Fourier, spectral-noise, Gabor, Gaussian/RBF, wavelet,
+line/edge, DoG/LoG, polynomial, radial/spiral, and constant candidates use CUDA;
+other families fall back to CPU and their counts are recorded in band metadata.
+Local-structure loss currently makes candidate scoring fall back to CPU because
+its complex filter-bank feature has not yet been ported.
+
+CuPy does not provide a drop-in equivalent of `scipy.optimize.minimize`, so
+bounded nonlinear atom refinement and the serializable public model/result
+boundary intentionally remain on the CPU. Backend scope and whether acceleration
+was active are recorded in `FitResult.metadata["backend_scope"]` and
+`FitResult.metadata["backend_accelerated"]`.
+
+GPU reductions and FFTs are numerically equivalent but not bit-for-bit identical
+to NumPy. Consequently, extremely close candidate ties can produce a different
+model. Validate GPU fits with tolerances appropriate to float64 numerical work.
+
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
 Candidate initialization is residual-adaptive: dominant spectral peaks propose noise frequencies, local structure tensors and support estimates initialize oriented atom directions and sizes, and the positive residual coverage initializes thresholded-noise masks. `noise_seed_candidates` controls the bounded deterministic seed bank (default 4); at most three noise frequencies are retained per iteration. The `spectral_noise` candidate packs the strongest unique residual FFT modes into one atom; `spectral_noise_modes` controls its bounded mode count (default 32).
@@ -132,7 +176,7 @@ default performs one pass over the eight most recently accepted atoms; configure
 `parameter_refinement_passes` and `parameter_refinement_atom_limit` to trade fit
 quality for runtime. Every pass and accepted replacement is recorded per band.
 
-The fitter includes individual Fourier modes, compact spectral-noise bundles, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Spectral bundles target the high-frequency energy that a small atom budget would otherwise miss, while using integer FFT modes so the result tiles over the source UV interval. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, LASSO, simplex noise, and GPU acceleration remain future extensions.
+The fitter includes individual Fourier modes, compact spectral-noise bundles, Gabor, RBF, seeded Perlin-noise, and localized wavelet candidates. Spectral bundles target the high-frequency energy that a small atom budget would otherwise miss, while using integer FFT modes so the result tiles over the source UV interval. Perlin candidates use a deterministic seed bank derived from `FitConfig.seed`; atom merging, LASSO, and simplex noise remain future extensions.
 
 ## Coordinates and procedural model
 

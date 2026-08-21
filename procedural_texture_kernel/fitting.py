@@ -7,7 +7,7 @@ from dataclasses import replace
 from threading import Lock
 from typing import TYPE_CHECKING
 import numpy as np
-from scipy.ndimage import gaussian_filter, zoom
+from scipy.ndimage import gaussian_filter
 from scipy.optimize import minimize
 from .components import (AnisotropicGaussianComponent, BinaryPrimitiveComponent,
     DifferenceOfGaussiansComponent, DomainWarpedNoiseComponent,
@@ -27,6 +27,8 @@ from .texture_loss import TextureLoss, TextureLossWeights
 from .weight_estimator import WeightEstimator
 from .spectral_diagnostics import compare_spectra
 from .shader_graph import ShaderGraph, ShaderGraphComponent, ShaderNode
+from .backend import numeric_backend
+from .gpu import CuPyCandidateScorer, group_supported_candidates
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -65,16 +67,20 @@ def _notify(callback, stage: str, progress: float, message: str) -> None:
     if callback is not None:
         callback(stage, float(np.clip(progress, 0, 1)), message)
 
-def _resize_for_fit(image: np.ndarray, limit: int | None) -> np.ndarray:
+def _resize_for_fit(image: np.ndarray, limit: int | None, backend=None) -> np.ndarray:
     if limit is None or max(image.shape) <= limit:
         return image
     factor = limit / max(image.shape)
     shape = (max(8, round(image.shape[0] * factor)), max(8, round(image.shape[1] * factor)))
     # Suppress frequencies that would alias into the smaller fitting raster.
     sigma = max(.5 / factor, .5)
-    filtered = gaussian_filter(image, sigma=sigma, mode="reflect")
-    return zoom(filtered, (shape[0] / image.shape[0], shape[1] / image.shape[1]),
-                order=1, prefilter=False)
+    backend = backend or numeric_backend("numpy")
+    source = backend.xp.asarray(image)
+    filtered = backend.gaussian_filter(source, sigma=sigma, mode="reflect")
+    resized = backend.zoom(
+        filtered, (shape[0] / image.shape[0], shape[1] / image.shape[1]),
+        order=1, prefilter=False)
+    return backend.to_numpy(resized)
 
 def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float,
                   include_plane: bool | None = None) -> None:
@@ -701,7 +707,12 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                        config.local_structure_scales,
                        config.local_structure_orientations,
                        config.local_structure_block_size)
+    gpu_scorer = None
+    if config.compute_backend == "cupy":
+        gpu_scorer = CuPyCandidateScorer(loss, u, v, config.gpu_batch_size)
     history = []
+    gpu_scored_candidates = 0
+    cpu_scored_candidates = 0
     candidate_pool = (ThreadPoolExecutor(
         max_workers=config.candidate_workers,
         thread_name_prefix=f"texture-candidate-{band_index + 1}")
@@ -746,9 +757,17 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             else:
                 atom.amplitude, score = _project(atom, residual, u, v)
             return score, atom
-        initialized = (list(candidate_executor.map(initialize, candidates))
+        gpu_results = {}
+        gpu_candidates = ([atom for atom in candidates if gpu_scorer.supported(atom)]
+                          if gpu_scorer is not None
+                          and gpu_scorer.can_score_complete_loss() else [])
+        gpu_ids = {id(atom) for atom in gpu_candidates}
+        cpu_candidates = [atom for atom in candidates if id(atom) not in gpu_ids]
+        gpu_scored_candidates += len(gpu_candidates)
+        cpu_scored_candidates += len(cpu_candidates)
+        initialized = (list(candidate_executor.map(initialize, cpu_candidates))
                        if candidate_executor is not None else
-                       [initialize(atom) for atom in candidates])
+                       [initialize(atom) for atom in cpu_candidates])
         if weights.local_structure > 0:
             initialized = _diverse_candidate_shortlist(
                 initialized, config.local_structure_candidate_limit)
@@ -762,6 +781,16 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         scored = (list(candidate_executor.map(score_candidate, initialized))
                   if candidate_executor is not None else
                   [score_candidate(item) for item in initialized])
+        if gpu_candidates:
+            gpu_scorer.prepare_iteration(current, residual)
+            for group in group_supported_candidates(gpu_candidates).values():
+                atoms = [item[1] for item in group]
+                for result in gpu_scorer.project_and_score(
+                        atoms, current, residual, before):
+                    gpu_results[id(result[2])] = result
+            cpu_results = {id(item[2]): item for item in scored}
+            scored = [gpu_results.get(id(atom), cpu_results.get(id(atom)))
+                      for atom in candidates]
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
         chosen = _refine_new_atom(chosen, current, loss, u, v,
@@ -804,6 +833,10 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
     result = {"band": band_index + 1, "components": len(model.components),
                    "candidate_families": list(active_families),
                    "candidate_workers": config.candidate_workers,
+                   "compute_backend": config.compute_backend,
+                   "gpu_batch_size": config.gpu_batch_size,
+                   "gpu_scored_candidates": gpu_scored_candidates,
+                   "cpu_scored_candidates": cpu_scored_candidates,
                    "iterations": history, "final_loss": final_loss,
                    "final_amplitude_refit": final_refit,
                    "parameter_refinement": parameter_refinement,
@@ -921,7 +954,9 @@ def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
 def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                 cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
     """Decompose the target, fit every band independently, then add the models."""
-    started = time.perf_counter(); fit_target = _resize_for_fit(target, config.fitting_resolution)
+    started = time.perf_counter()
+    backend = numeric_backend(config.compute_backend)
+    fit_target = _resize_for_fit(target, config.fitting_resolution, backend)
     h, w = fit_target.shape
     automatic_frequency = config.max_frequency is None
     if automatic_frequency:
@@ -932,7 +967,22 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
     decomposition = create_decomposition(config.decomposition_method,
                                          config.decomposition_bands,
                                          config.decomposition_base_sigma)
-    target_bands = decomposition.decompose(fit_target)
+    # Gaussian pyramid construction has a direct cupyx.scipy.ndimage
+    # equivalent.  Convert each completed band back because model objects,
+    # callbacks, serialization, and SciPy's nonlinear optimizer are CPU APIs.
+    if backend.accelerated:
+        source = backend.xp.asarray(fit_target)
+        if config.decomposition_bands == 1:
+            target_bands = (fit_target.copy(),)
+        else:
+            blurred = tuple(backend.gaussian_filter(source, sigma, mode="reflect")
+                            for sigma in decomposition.sigmas)
+            device_bands = ((source - blurred[0],) + tuple(
+                blurred[index] - blurred[index + 1]
+                for index in range(len(blurred) - 1)) + (blurred[-1],))
+            target_bands = tuple(backend.to_numpy(band) for band in device_bands)
+    else:
+        target_bands = decomposition.decompose(fit_target)
     band_count = len(target_bands)
     band_progress = [0.0] * band_count
     progress_lock = Lock()
@@ -996,6 +1046,12 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "noise_seed_candidates": config.noise_seed_candidates,
                    "band_workers": effective_workers,
                    "candidate_workers": config.candidate_workers,
+                   "compute_backend": config.compute_backend,
+                   "backend_accelerated": backend.accelerated,
+                   "backend_scope": ("cupy arrays/FFT/ndimage candidate scoring and preprocessing; "
+                                     "scipy.optimize refinement remains on CPU"
+                                     if backend.accelerated else "numpy/scipy"),
+                   "gpu_batch_size": config.gpu_batch_size,
                    "frequency_range": {"minimum": config.min_frequency,
                                        "maximum": config.max_frequency,
                                        "maximum_mode": ("automatic" if

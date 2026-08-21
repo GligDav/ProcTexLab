@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import numpy as np
+from .backend import array_module
 from .components import ProceduralComponent, component_from_dict
 from .coordinates import COORDINATE_SYSTEM, coordinate_grid, coordinate_grid_region
 
@@ -22,7 +23,8 @@ class ProceduralTextureModel:
         if u.shape != v.shape:
             raise ValueError("u and v grids must have the same shape")
         out = self.bias + self.trend_u * (u - 0.5) + self.trend_v * (v - 0.5)
-        out = np.broadcast_to(out, u.shape).astype(np.float64, copy=True)
+        xp = array_module(u, v)
+        out = xp.broadcast_to(out, u.shape).astype(xp.float64, copy=True)
         for component in self.components:
             out += component.evaluate(u, v)
         return out

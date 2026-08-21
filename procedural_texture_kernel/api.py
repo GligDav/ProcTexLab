@@ -68,6 +68,8 @@ class FitConfig:
     decomposition_base_sigma: float = 1.0
     band_workers: int = 1
     candidate_workers: int = 1
+    compute_backend: str = "numpy"
+    gpu_batch_size: int = 16
     detail_refinement: bool = False
     detail_max_components: int = 12
     detail_min_frequency: float = 12.0
@@ -112,6 +114,12 @@ class FitConfig:
                 or not isinstance(self.candidate_workers, int)
                 or self.candidate_workers < 1):
             raise ValueError("candidate_workers must be a positive integer")
+        if self.compute_backend not in ("numpy", "cupy"):
+            raise ValueError("compute_backend must be 'numpy' or 'cupy'")
+        if (isinstance(self.gpu_batch_size, bool)
+                or not isinstance(self.gpu_batch_size, int)
+                or self.gpu_batch_size < 1):
+            raise ValueError("gpu_batch_size must be a positive integer")
         if self.detail_max_components < 0:
             raise ValueError("detail_max_components must be non-negative")
         if (not math.isfinite(self.detail_min_frequency)

@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "Pillow>=9"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+gpu = ["cupy-cuda12x>=13"]
 
 [tool.setuptools.packages.find]
 include = ["procedural_texture_kernel*", "gui*"]

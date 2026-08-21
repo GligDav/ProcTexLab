@@ -44,6 +44,9 @@ class TestApplication(tk.Tk):
         self.max_frequency = tk.DoubleVar(value=0.0)
         self.decomposition_bands = tk.IntVar(value=DEFAULT_DECOMPOSITION_BANDS)
         self.band_workers = tk.IntVar(value=3)
+        self.candidate_workers = tk.IntVar(value=1)
+        self.compute_backend = tk.StringVar(value="numpy")
+        self.gpu_batch_size = tk.IntVar(value=16)
         self.min_improvement = tk.DoubleVar(value=1e-6)
         for label, variable in (("Components", self.components), ("Iterations", self.iterations),
                                 ("Fit resolution", self.resolution),
@@ -116,6 +119,16 @@ class TestApplication(tk.Tk):
         ttk.Label(detail_controls, text="Band workers").pack(
             side="left", padx=(12, 2))
         ttk.Entry(detail_controls, textvariable=self.band_workers,
+                  width=4).pack(side="left")
+        ttk.Label(detail_controls, text="Candidate workers").pack(
+            side="left", padx=(12, 2))
+        ttk.Entry(detail_controls, textvariable=self.candidate_workers,
+                  width=4).pack(side="left")
+        ttk.Label(detail_controls, text="Backend").pack(side="left", padx=(12, 2))
+        ttk.Combobox(detail_controls, textvariable=self.compute_backend,
+                     values=("numpy", "cupy"), state="readonly", width=7).pack(side="left")
+        ttk.Label(detail_controls, text="GPU batch").pack(side="left", padx=(12, 2))
+        ttk.Entry(detail_controls, textvariable=self.gpu_batch_size,
                   width=4).pack(side="left")
         ttk.Label(detail_controls, text="Spectral modes").pack(
             side="left", padx=(12, 2))
@@ -257,6 +270,9 @@ class TestApplication(tk.Tk):
                          max_iterations=self.iterations.get(), fitting_resolution=self.resolution.get(),
                          decomposition_bands=self.decomposition_bands.get(),
                          band_workers=self.band_workers.get(),
+                         candidate_workers=self.candidate_workers.get(),
+                         compute_backend=self.compute_backend.get(),
+                         gpu_batch_size=self.gpu_batch_size.get(),
                          component_families=families,
                          max_frequency=(None if self.max_frequency.get() <= 0
                                         else self.max_frequency.get()),
