@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import ClassVar
 import numpy as np
+from .backend import array_module
 
 @dataclass
 class ProceduralComponent:
@@ -24,7 +25,8 @@ class SinusoidComponent(ProceduralComponent):
     phase: float = 0.0
     type_name: ClassVar[str] = "sinusoid"
     def basis(self, u, v):
-        return np.cos(2.0 * np.pi * (self.frequency_u * u + self.frequency_v * v) + self.phase)
+        xp = array_module(u, v)
+        return xp.cos(2.0 * xp.pi * (self.frequency_u * u + self.frequency_v * v) + self.phase)
 
 
 @dataclass
@@ -37,16 +39,16 @@ class SpectralNoiseComponent(ProceduralComponent):
     type_name: ClassVar[str] = "spectral_noise"
 
     def basis(self, u, v):
+        xp = array_module(u, v)
         lengths = {len(self.frequencies_u), len(self.frequencies_v),
                    len(self.weights), len(self.phases)}
         if len(lengths) != 1:
             raise ValueError("Spectral noise mode arrays must have equal lengths")
-        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)),
-                          dtype=np.float64)
+        result = xp.zeros(xp.broadcast_shapes(u.shape, v.shape), dtype=xp.float64)
         for fu, fv, weight, phase in zip(
                 self.frequencies_u, self.frequencies_v,
                 self.weights, self.phases):
-            result += weight * np.cos(2.0 * np.pi * (fu * u + fv * v) + phase)
+            result += weight * xp.cos(2.0 * xp.pi * (fu * u + fv * v) + phase)
         rms = np.sqrt(.5 * np.sum(np.asarray(self.weights, dtype=float) ** 2))
         return result / max(float(rms), 1e-12)
 
@@ -62,11 +64,12 @@ class GaborComponent(ProceduralComponent):
     phase: float = 0.0
     type_name: ClassVar[str] = "gabor"
     def basis(self, u, v):
+        xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
-        c, s = np.cos(self.orientation), np.sin(self.orientation)
+        c, s = xp.cos(self.orientation), xp.sin(self.orientation)
         x, y = c * du + s * dv, -s * du + c * dv
-        envelope = np.exp(-0.5 * ((x / self.sigma_u) ** 2 + (y / self.sigma_v) ** 2))
-        return envelope * np.cos(2.0 * np.pi * self.frequency * x + self.phase)
+        envelope = xp.exp(-0.5 * ((x / self.sigma_u) ** 2 + (y / self.sigma_v) ** 2))
+        return envelope * xp.cos(2.0 * xp.pi * self.frequency * x + self.phase)
 
 @dataclass
 class GaussianRBFComponent(ProceduralComponent):
@@ -76,8 +79,9 @@ class GaussianRBFComponent(ProceduralComponent):
     sigma: float = 0.1
     type_name: ClassVar[str] = "gaussian_rbf"
     def basis(self, u, v):
+        xp = array_module(u, v)
         r2 = (u - self.center_u) ** 2 + (v - self.center_v) ** 2
-        return np.exp(-0.5 * r2 / self.sigma**2)
+        return xp.exp(-0.5 * r2 / self.sigma**2)
 
 @dataclass
 class PerlinNoiseComponent(ProceduralComponent):
@@ -93,29 +97,31 @@ class PerlinNoiseComponent(ProceduralComponent):
 
     @staticmethod
     def _noise(x, y, permutation):
-        xi = np.floor(x).astype(np.int64) & 255
-        yi = np.floor(y).astype(np.int64) & 255
-        xf, yf = x - np.floor(x), y - np.floor(y)
+        xp = array_module(x, y)
+        xi = xp.floor(x).astype(xp.int64) & 255
+        yi = xp.floor(y).astype(xp.int64) & 255
+        xf, yf = x - xp.floor(x), y - xp.floor(y)
         fade = lambda t: t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
         sx, sy = fade(xf), fade(yf)
         p = permutation
         aa, ab = p[p[xi] + yi], p[p[xi] + yi + 1]
         ba, bb = p[p[xi + 1] + yi], p[p[xi + 1] + yi + 1]
         def gradient(h, dx, dy):
-            angle = (h & 7) * (np.pi / 4.0)
-            return np.cos(angle) * dx + np.sin(angle) * dy
+            angle = (h & 7) * (xp.pi / 4.0)
+            return xp.cos(angle) * dx + xp.sin(angle) * dy
         lerp = lambda a, b, t: a + t * (b - a)
         lower = lerp(gradient(aa, xf, yf), gradient(ba, xf - 1, yf), sx)
         upper = lerp(gradient(ab, xf, yf - 1), gradient(bb, xf - 1, yf - 1), sx)
-        return np.sqrt(2.0) * lerp(lower, upper, sy)
+        return xp.sqrt(2.0) * lerp(lower, upper, sy)
 
     def basis(self, u, v):
+        xp = array_module(u, v)
         if self.octaves < 1:
             raise ValueError("Perlin octaves must be at least one")
         rng = np.random.default_rng(self.seed)
         base = rng.permutation(256)
-        permutation = np.concatenate((base, base))
-        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)), dtype=np.float64)
+        permutation = xp.asarray(np.concatenate((base, base)))
+        result = xp.zeros(xp.broadcast_shapes(u.shape, v.shape), dtype=xp.float64)
         weight = 1.0
         frequency = self.frequency
         for _ in range(self.octaves):
@@ -139,11 +145,12 @@ class WaveletComponent(ProceduralComponent):
     orientation: float = 0.0
     type_name: ClassVar[str] = "wavelet"
     def basis(self, u, v):
+        xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
-        c, s = np.cos(self.orientation), np.sin(self.orientation)
+        c, s = xp.cos(self.orientation), xp.sin(self.orientation)
         x, y = c * du + s * dv, -s * du + c * dv
         radius2 = (x / self.scale_u) ** 2 + (y / self.scale_v) ** 2
-        return (1.0 - radius2) * np.exp(-0.5 * radius2)
+        return (1.0 - radius2) * xp.exp(-0.5 * radius2)
 
 def _perlin_basis(u, v, frequency, octaves, persistence, lacunarity,
                   offset_u, offset_v, seed):
@@ -167,17 +174,18 @@ class ThresholdedNoiseComponent(ProceduralComponent):
     type_name: ClassVar[str] = "thresholded_noise"
 
     def basis(self, u, v):
+        xp = array_module(u, v)
         # Rotate around the source-domain center while retaining procedural
         # continuation outside [0, 1).  Offsets remain in rotated UV space.
         du, dv = u - .5, v - .5
-        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        c, s = xp.cos(self.rotation), xp.sin(self.rotation)
         ru = c * du + s * dv + .5
         rv = -s * du + c * dv + .5
         noise = _perlin_basis(ru, rv, self.frequency, self.octaves,
                               self.persistence, self.lacunarity,
                               self.offset_u, self.offset_v, self.seed)
         width = max(float(self.edge_width), 1e-12)
-        t = np.clip((noise - (self.threshold - width)) / (2.0 * width), 0.0, 1.0)
+        t = xp.clip((noise - (self.threshold - width)) / (2.0 * width), 0.0, 1.0)
         smooth = t * t * (3.0 - 2.0 * t)
         return 2.0 * smooth - 1.0
 
@@ -225,20 +233,21 @@ class VoronoiNoiseComponent(ProceduralComponent):
     seed: int = 0
     type_name: ClassVar[str] = "voronoi_noise"
     def basis(self, u, v):
+        xp = array_module(u, v)
         x = (u + self.offset_u) * self.frequency
         y = (v + self.offset_v) * self.frequency
-        ix, iy = np.floor(x).astype(np.int64), np.floor(y).astype(np.int64)
-        best = np.full(np.broadcast_shapes(np.shape(u), np.shape(v)), np.inf)
+        ix, iy = xp.floor(x).astype(xp.int64), xp.floor(y).astype(xp.int64)
+        best = xp.full(xp.broadcast_shapes(u.shape, v.shape), xp.inf)
         def rnd(a, b, salt):
-            n = np.sin(a * 127.1 + b * 311.7 + (self.seed + salt) * 74.7) * 43758.5453
-            return n - np.floor(n)
+            n = xp.sin(a * 127.1 + b * 311.7 + (self.seed + salt) * 74.7) * 43758.5453
+            return n - xp.floor(n)
         for oy in (-1, 0, 1):
             for ox in (-1, 0, 1):
                 cx, cy = ix + ox, iy + oy
                 px = cx + .5 + (rnd(cx, cy, 0) - .5) * self.jitter
                 py = cy + .5 + (rnd(cx, cy, 1) - .5) * self.jitter
-                best = np.minimum(best, np.hypot(x - px, y - py))
-        return np.clip(1.0 - np.sqrt(2.0) * best, -1.0, 1.0)
+                best = xp.minimum(best, xp.hypot(x - px, y - py))
+        return xp.clip(1.0 - xp.sqrt(2.0) * best, -1.0, 1.0)
 
 @dataclass
 class FractalBrownianMotionComponent(ProceduralComponent):
@@ -264,22 +273,23 @@ class RidgedMultifractalComponent(FractalBrownianMotionComponent):
     anisotropy: float = 1.0
     type_name: ClassVar[str] = "ridged_multifractal"
     def basis(self, u, v):
+        xp = array_module(u, v)
         if self.octaves < 1:
             raise ValueError("Ridged multifractal octaves must be at least one")
         rng = np.random.default_rng(self.seed)
         base = rng.permutation(256)
-        permutation = np.concatenate((base, base))
+        permutation = xp.asarray(np.concatenate((base, base)))
         du, dv = u - .5, v - .5
-        c, s = np.cos(self.rotation), np.sin(self.rotation)
+        c, s = xp.cos(self.rotation), xp.sin(self.rotation)
         ru = c * du + s * dv + .5 + self.offset_u
         rv = (-s * du + c * dv) * max(float(self.anisotropy), 1e-6) + .5 + self.offset_v
-        result = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)), dtype=np.float64)
+        result = xp.zeros(xp.broadcast_shapes(u.shape, v.shape), dtype=xp.float64)
         weight, frequency, total_weight = 1.0, self.frequency, 0.0
         ridge_power = max(float(self.ridge_power), 1e-6)
         for _ in range(self.octaves):
             noise = PerlinNoiseComponent._noise(
                 ru * frequency, rv * frequency, permutation)
-            ridge = np.clip(self.ridge_offset - np.abs(noise), 0.0, 1.0) ** ridge_power
+            ridge = xp.clip(self.ridge_offset - xp.abs(noise), 0.0, 1.0) ** ridge_power
             result += weight * ridge
             total_weight += weight
             weight *= self.persistence
@@ -291,7 +301,8 @@ class TurbulenceNoiseComponent(FractalBrownianMotionComponent):
     """Absolute-value (folded) fractal noise."""
     type_name: ClassVar[str] = "turbulence_noise"
     def basis(self, u, v):
-        return 2.0 * np.abs(super().basis(u, v)) - 1.0
+        xp = array_module(u, v)
+        return 2.0 * xp.abs(super().basis(u, v)) - 1.0
 
 @dataclass
 class DomainWarpedNoiseComponent(FractalBrownianMotionComponent):
@@ -350,6 +361,7 @@ class WarpedRidgeDetailComponent(ProceduralComponent):
     type_name: ClassVar[str] = "warped_ridge_detail"
 
     def basis(self, u, v):
+        xp = array_module(u, v)
         ridge = WarpedRidgedMultifractalComponent(
             frequency=self.ridge_frequency, octaves=self.ridge_octaves,
             offset_u=self.ridge_offset_u, offset_v=self.ridge_offset_v,
@@ -359,7 +371,7 @@ class WarpedRidgeDetailComponent(ProceduralComponent):
             warp_frequency=self.warp_frequency,
             seed=self.mask_seed).basis(u, v)
         width = max(float(self.mask_edge_width), 1e-12)
-        t = np.clip((ridge - (self.mask_threshold - width))
+        t = xp.clip((ridge - (self.mask_threshold - width))
                     / (2.0 * width), 0.0, 1.0)
         mask = t * t * (3.0 - 2.0 * t)
         if self.invert_mask:
@@ -370,8 +382,9 @@ class WarpedRidgeDetailComponent(ProceduralComponent):
         return mask * detail
 
 def _rotated(u, v, center_u, center_v, orientation):
+    xp = array_module(u, v)
     du, dv = u - center_u, v - center_v
-    c, s = np.cos(orientation), np.sin(orientation)
+    c, s = xp.cos(orientation), xp.sin(orientation)
     return c * du + s * dv, -s * du + c * dv
 
 @dataclass
@@ -384,8 +397,9 @@ class AnisotropicGaussianComponent(ProceduralComponent):
     orientation: float = 0.0
     type_name: ClassVar[str] = "anisotropic_gaussian"
     def basis(self, u, v):
+        xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
-        return np.exp(-.5 * ((x / self.sigma_u) ** 2 + (y / self.sigma_v) ** 2))
+        return xp.exp(-.5 * ((x / self.sigma_u) ** 2 + (y / self.sigma_v) ** 2))
 
 @dataclass
 class LineComponent(ProceduralComponent):
@@ -398,9 +412,10 @@ class LineComponent(ProceduralComponent):
     softness: float = .01
     type_name: ClassVar[str] = "line"
     def basis(self, u, v):
+        xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
-        d = np.maximum(np.abs(y) - self.width / 2, np.abs(x) - self.length / 2)
-        return 1.0 / (1.0 + np.exp(np.clip(d / max(self.softness, 1e-12), -60, 60)))
+        d = xp.maximum(xp.abs(y) - self.width / 2, xp.abs(x) - self.length / 2)
+        return 1.0 / (1.0 + xp.exp(xp.clip(d / max(self.softness, 1e-12), -60, 60)))
 
 @dataclass
 class StepEdgeComponent(ProceduralComponent):
@@ -411,10 +426,11 @@ class StepEdgeComponent(ProceduralComponent):
     softness: float = .02
     type_name: ClassVar[str] = "step_edge"
     def basis(self, u, v):
+        xp = array_module(u, v)
         x, _ = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         if self.softness <= 0:
-            return np.where(x >= 0, 1.0, -1.0)
-        return np.tanh(x / self.softness)
+            return xp.where(x >= 0, 1.0, -1.0)
+        return xp.tanh(x / self.softness)
 
 @dataclass
 class DifferenceOfGaussiansComponent(ProceduralComponent):
@@ -426,14 +442,15 @@ class DifferenceOfGaussiansComponent(ProceduralComponent):
     mode: str = "dog"
     type_name: ClassVar[str] = "dog_log"
     def basis(self, u, v):
+        xp = array_module(u, v)
         r2 = (u - self.center_u) ** 2 + (v - self.center_v) ** 2
         q = r2 / self.sigma**2
         if self.mode == "log":
-            return (1.0 - .5 * q) * np.exp(-.5 * q)
+            return (1.0 - .5 * q) * xp.exp(-.5 * q)
         if self.mode != "dog":
             raise ValueError("mode must be 'dog' or 'log'")
         outer = max(self.ratio, 1.000001) * self.sigma
-        return np.exp(-.5 * q) - np.exp(-.5 * r2 / outer**2) / self.ratio**2
+        return xp.exp(-.5 * q) - xp.exp(-.5 * r2 / outer**2) / self.ratio**2
 
 @dataclass
 class PolynomialTrendComponent(ProceduralComponent):
@@ -459,8 +476,9 @@ class RadialWaveComponent(ProceduralComponent):
     decay: float = 0.0
     type_name: ClassVar[str] = "radial_wave"
     def basis(self, u, v):
-        r = np.hypot(u - self.center_u, v - self.center_v)
-        return np.cos(2*np.pi*self.frequency*r + self.phase) * np.exp(-self.decay*r)
+        xp = array_module(u, v)
+        r = xp.hypot(u - self.center_u, v - self.center_v)
+        return xp.cos(2*xp.pi*self.frequency*r + self.phase) * xp.exp(-self.decay*r)
 
 @dataclass
 class SpiralWaveComponent(RadialWaveComponent):
@@ -468,9 +486,10 @@ class SpiralWaveComponent(RadialWaveComponent):
     arms: float = 2.0
     type_name: ClassVar[str] = "spiral_wave"
     def basis(self, u, v):
+        xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
-        r, theta = np.hypot(du, dv), np.arctan2(dv, du)
-        return np.cos(2*np.pi*self.frequency*r + self.arms*theta + self.phase) * np.exp(-self.decay*r)
+        r, theta = xp.hypot(du, dv), xp.arctan2(dv, du)
+        return xp.cos(2*xp.pi*self.frequency*r + self.arms*theta + self.phase) * xp.exp(-self.decay*r)
 
 @dataclass
 class SparseImpulseComponent(ProceduralComponent):
@@ -481,13 +500,14 @@ class SparseImpulseComponent(ProceduralComponent):
     signed: bool = False
     type_name: ClassVar[str] = "sparse_impulse"
     def basis(self, u, v):
+        xp = array_module(u, v)
         count = max(0, int(round(self.density)))
         rng = np.random.default_rng(self.seed)
-        out = np.zeros(np.broadcast_shapes(np.shape(u), np.shape(v)))
+        out = xp.zeros(xp.broadcast_shapes(u.shape, v.shape))
         for _ in range(count):
             cu, cv = rng.random(2); sign = rng.choice((-1., 1.)) if self.signed else 1.
-            out += sign * np.exp(-.5 * ((u-cu)**2 + (v-cv)**2) / max(self.radius, 1e-12)**2)
-        return np.clip(out, -1., 1.)
+            out += sign * xp.exp(-.5 * ((u-cu)**2 + (v-cv)**2) / max(self.radius, 1e-12)**2)
+        return xp.clip(out, -1., 1.)
 
 @dataclass
 class BinaryPrimitiveComponent(ProceduralComponent):
@@ -501,11 +521,12 @@ class BinaryPrimitiveComponent(ProceduralComponent):
     thickness: float = .03
     type_name: ClassVar[str] = "binary_primitive"
     def basis(self, u, v):
+        xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         if self.shape == "disk": mask = (x/self.size_u)**2 + (y/self.size_v)**2 <= 1
-        elif self.shape == "box": mask = (np.abs(x) <= self.size_u) & (np.abs(y) <= self.size_v)
-        elif self.shape == "ring": mask = np.abs(np.sqrt((x/self.size_u)**2 + (y/self.size_v)**2)-1) <= self.thickness/max(self.size_u, self.size_v)
-        elif self.shape == "checker": mask = (np.floor(x/self.size_u) + np.floor(y/self.size_v)).astype(int) % 2 == 0
+        elif self.shape == "box": mask = (xp.abs(x) <= self.size_u) & (xp.abs(y) <= self.size_v)
+        elif self.shape == "ring": mask = xp.abs(xp.sqrt((x/self.size_u)**2 + (y/self.size_v)**2)-1) <= self.thickness/max(self.size_u, self.size_v)
+        elif self.shape == "checker": mask = (xp.floor(x/self.size_u) + xp.floor(y/self.size_v)).astype(int) % 2 == 0
         else: raise ValueError("shape must be 'disk', 'box', 'ring', or 'checker'")
         return mask.astype(float)
 
@@ -515,7 +536,8 @@ class SimpleConstantComponent(ProceduralComponent):
     value:float = 0.0
     type_name: ClassVar[str] = "simple_constant"
     def basis(self, u, v):
-        return np.ones(np.broadcast_shapes(np.shape(u), np.shape(v))) * self.value
+        xp = array_module(u, v)
+        return xp.ones(xp.broadcast_shapes(u.shape, v.shape)) * self.value
 
 COMPONENT_TYPES = {c.type_name: c for c in (
     SinusoidComponent, SpectralNoiseComponent, GaborComponent, GaussianRBFComponent,

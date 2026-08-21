@@ -116,6 +116,11 @@ installation raises a clear error instead of silently changing the requested
 backend. Image resizing and Gaussian-pyramid construction use CuPy and
 `cupyx.scipy.ndimage`; supported candidate families then remain batched on the
 device for array operations, reductions, FFTs, and loss evaluation.
+Component and model grid evaluation also select their array namespace from the
+provided coordinate arrays. Passing CuPy `u`/`v` grids therefore returns CuPy
+arrays without changing component parameters or serialization. Seeded noise
+keeps deterministic permutation generation on the CPU and transfers only that
+small lookup table; its per-pixel work runs on the GPU.
 
 `gpu_batch_size` defaults to 16 and bounds the main device allocation,
 approximately `batch_size * height * width * 8` bytes per resident float64

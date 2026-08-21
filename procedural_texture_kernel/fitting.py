@@ -27,7 +27,8 @@ from .texture_loss import TextureLoss, TextureLossWeights
 from .weight_estimator import WeightEstimator
 from .spectral_diagnostics import compare_spectra
 from .shader_graph import ShaderGraph, ShaderGraphComponent, ShaderNode
-from .gpu import CuPyCandidateScorer, group_supported_candidates, numeric_backend
+from .backend import numeric_backend
+from .gpu import CuPyCandidateScorer, group_supported_candidates
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback

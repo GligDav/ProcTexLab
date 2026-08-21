@@ -22,7 +22,8 @@ from procedural_texture_kernel.fitting import (
     _perlin_candidates, _refine_model_parameters, _refine_new_atom,
     _spectral_noise_candidate)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
-from procedural_texture_kernel.gpu import GPU_COMPONENT_TYPES, _basis_batch, numeric_backend
+from procedural_texture_kernel.backend import numeric_backend
+from procedural_texture_kernel.gpu import GPU_COMPONENT_TYPES, _basis_batch
 
 
 def test_numpy_numeric_backend_is_lazy_and_round_trips_arrays():
@@ -36,6 +37,28 @@ def test_numpy_numeric_backend_is_lazy_and_round_trips_arrays():
 def test_unknown_numeric_backend_is_rejected():
     with pytest.raises(ValueError, match="compute backend"):
         numeric_backend("cuda")
+
+
+def test_component_array_namespace_defaults_to_numpy():
+    u, v = coordinate_grid(7, 5)
+    values = PerlinNoiseComponent(seed=3, octaves=2).basis(u, v)
+    assert isinstance(values, np.ndarray)
+
+
+def test_components_accept_cupy_coordinate_grids_when_available(monkeypatch, tmp_path):
+    monkeypatch.setenv("CUPY_CACHE_DIR", str(tmp_path / "cupy-cache"))
+    cp = pytest.importorskip("cupy")
+    try:
+        if cp.cuda.runtime.getDeviceCount() < 1:
+            pytest.skip("no CUDA device")
+        u, v = coordinate_grid(9, 7)
+        component = DomainWarpedNoiseComponent(seed=4, octaves=2)
+        expected = component.basis(u, v)
+        actual = component.basis(cp.asarray(u), cp.asarray(v))
+        assert isinstance(actual, cp.ndarray)
+        assert np.allclose(cp.asnumpy(actual), expected, atol=1e-12)
+    except cp.cuda.runtime.CUDARuntimeError:
+        pytest.skip("CuPy cannot initialize CUDA")
 
 def test_coordinates():
     u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
