@@ -107,6 +107,16 @@ def test_candidate_worker_validation(value):
         FitConfig(candidate_workers=value)
 
 
+@pytest.mark.parametrize("kwargs", [
+    {"compute_backend": "cuda"},
+    {"gpu_batch_size": 0},
+    {"gpu_batch_size": True},
+])
+def test_gpu_configuration_validation(kwargs):
+    with pytest.raises(ValueError):
+        FitConfig(**kwargs)
+
+
 def test_parallel_band_fit_preserves_order_results_and_monotonic_progress():
     y, x = np.indices((20, 24))
     image = .5 + .15 * np.sin(2 * np.pi * x / 6)

@@ -27,6 +27,7 @@ from .texture_loss import TextureLoss, TextureLossWeights
 from .weight_estimator import WeightEstimator
 from .spectral_diagnostics import compare_spectra
 from .shader_graph import ShaderGraph, ShaderGraphComponent, ShaderNode
+from .gpu import CuPyCandidateScorer, group_supported_candidates
 
 if TYPE_CHECKING:
     from .api import FitConfig, ProgressCallback, CancelCallback
@@ -701,7 +702,12 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                        config.local_structure_scales,
                        config.local_structure_orientations,
                        config.local_structure_block_size)
+    gpu_scorer = None
+    if config.compute_backend == "cupy":
+        gpu_scorer = CuPyCandidateScorer(loss, u, v, config.gpu_batch_size)
     history = []
+    gpu_scored_candidates = 0
+    cpu_scored_candidates = 0
     candidate_pool = (ThreadPoolExecutor(
         max_workers=config.candidate_workers,
         thread_name_prefix=f"texture-candidate-{band_index + 1}")
@@ -746,9 +752,17 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             else:
                 atom.amplitude, score = _project(atom, residual, u, v)
             return score, atom
-        initialized = (list(candidate_executor.map(initialize, candidates))
+        gpu_results = {}
+        gpu_candidates = ([atom for atom in candidates if gpu_scorer.supported(atom)]
+                          if gpu_scorer is not None
+                          and gpu_scorer.can_score_complete_loss() else [])
+        gpu_ids = {id(atom) for atom in gpu_candidates}
+        cpu_candidates = [atom for atom in candidates if id(atom) not in gpu_ids]
+        gpu_scored_candidates += len(gpu_candidates)
+        cpu_scored_candidates += len(cpu_candidates)
+        initialized = (list(candidate_executor.map(initialize, cpu_candidates))
                        if candidate_executor is not None else
-                       [initialize(atom) for atom in candidates])
+                       [initialize(atom) for atom in cpu_candidates])
         if weights.local_structure > 0:
             initialized = _diverse_candidate_shortlist(
                 initialized, config.local_structure_candidate_limit)
@@ -762,6 +776,16 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         scored = (list(candidate_executor.map(score_candidate, initialized))
                   if candidate_executor is not None else
                   [score_candidate(item) for item in initialized])
+        if gpu_candidates:
+            gpu_scorer.prepare_iteration(current, residual)
+            for group in group_supported_candidates(gpu_candidates).values():
+                atoms = [item[1] for item in group]
+                for result in gpu_scorer.project_and_score(
+                        atoms, current, residual, before):
+                    gpu_results[id(result[2])] = result
+            cpu_results = {id(item[2]): item for item in scored}
+            scored = [gpu_results.get(id(atom), cpu_results.get(id(atom)))
+                      for atom in candidates]
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
         chosen = _refine_new_atom(chosen, current, loss, u, v,
@@ -804,6 +828,10 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
     result = {"band": band_index + 1, "components": len(model.components),
                    "candidate_families": list(active_families),
                    "candidate_workers": config.candidate_workers,
+                   "compute_backend": config.compute_backend,
+                   "gpu_batch_size": config.gpu_batch_size,
+                   "gpu_scored_candidates": gpu_scored_candidates,
+                   "cpu_scored_candidates": cpu_scored_candidates,
                    "iterations": history, "final_loss": final_loss,
                    "final_amplitude_refit": final_refit,
                    "parameter_refinement": parameter_refinement,
@@ -996,6 +1024,8 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                    "noise_seed_candidates": config.noise_seed_candidates,
                    "band_workers": effective_workers,
                    "candidate_workers": config.candidate_workers,
+                   "compute_backend": config.compute_backend,
+                   "gpu_batch_size": config.gpu_batch_size,
                    "frequency_range": {"minimum": config.min_frequency,
                                        "maximum": config.max_frequency,
                                        "maximum_mode": ("automatic" if

@@ -22,10 +22,34 @@ from procedural_texture_kernel.fitting import (
     _perlin_candidates, _refine_model_parameters, _refine_new_atom,
     _spectral_noise_candidate)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
+from procedural_texture_kernel.gpu import GPU_COMPONENT_TYPES, _basis_batch
 
 def test_coordinates():
     u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
     assert u[0,-1] == .75 and v[-1,0] == .5
+
+
+@pytest.mark.parametrize("component", [
+    SinusoidComponent(.3, 2, -1, .4),
+    SpectralNoiseComponent(.2, (1., 3.), (2., -1.), (.7, .3), (.1, .8)),
+    GaborComponent(.4, .3, .6, .12, .2, 4., .5, .2),
+    GaussianRBFComponent(.3, .2, .7, .15),
+    WaveletComponent(.2, .4, .3, .1, .2, .7),
+    AnisotropicGaussianComponent(.4, .3, .6, .2, .08, .5),
+    LineComponent(.2, .4, .6, .08, .7, .3, .02),
+    StepEdgeComponent(.3, .4, .6, .2, .03),
+    DifferenceOfGaussiansComponent(.2, .3, .7, .12, 1.7, "dog"),
+    DifferenceOfGaussiansComponent(.2, .3, .7, .12, 1.7, "log"),
+    PolynomialTrendComponent(.2, .1, -.2, .7, .3, -.4),
+    RadialWaveComponent(.2, .4, .6, 5., .2, .3),
+    SpiralWaveComponent(.2, .4, .6, 5., .2, .3, 3.),
+    SimpleConstantComponent(.4, .25),
+])
+def test_gpu_family_batch_formula_matches_component_basis(component):
+    u, v = coordinate_grid(13, 11)
+    assert isinstance(component, GPU_COMPONENT_TYPES)
+    actual = _basis_batch([component], u, v, np)[0]
+    assert np.allclose(actual, component.basis(u, v), atol=1e-12)
 
 def test_coordinate_region_and_extended_evaluation():
     u, v = coordinate_grid_region(4, 2, (1, 3), (-1, 1))

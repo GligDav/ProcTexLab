@@ -12,6 +12,16 @@ python -m pip install -e ".[dev]"
 
 The runtime dependencies are NumPy, SciPy, and Pillow. Tkinter is normally included with desktop Python distributions.
 
+For optional NVIDIA CUDA 12 candidate batching, install the GPU extra into the
+same virtual environment (the base install does not pull in CUDA packages):
+
+```bash
+python -m pip install -e ".[dev,gpu]"
+```
+
+For a different CUDA major version, install the matching official CuPy wheel
+instead of `cupy-cuda12x`.
+
 ## Public API
 
 ```python
@@ -97,6 +107,21 @@ configured to use several native threads.
 The optimizer avoids calculating zero-weight texture features during inner
 probes. Full loss components are still calculated at recorded iterations and by
 `calculate_texture_loss`, so public diagnostics and fit decisions are unchanged.
+
+Set `compute_backend="cupy"` to batch supported candidate families on an NVIDIA
+GPU. `gpu_batch_size` defaults to 16 and bounds the main device allocation,
+approximately `batch_size * height * width * 8` bytes per resident float64
+array. Several arrays coexist, so start conservatively at high resolutions and
+increase while monitoring VRAM. The target and coordinate grids stay resident
+for a complete band. Fourier, spectral-noise, Gabor, Gaussian/RBF, wavelet,
+line/edge, DoG/LoG, polynomial, radial/spiral, and constant candidates use CUDA;
+other families fall back to CPU and their counts are recorded in band metadata.
+Local-structure loss currently makes candidate scoring fall back to CPU because
+its complex filter-bank feature has not yet been ported.
+
+GPU reductions and FFTs are numerically equivalent but not bit-for-bit identical
+to NumPy. Consequently, extremely close candidate ties can produce a different
+model. Validate GPU fits with tolerances appropriate to float64 numerical work.
 
 With `band_aware_candidates=True` (the default), high-frequency Laplacian bands search detail families, the low-pass residual searches coherent structure families, and middle bands allow both roles. A user selection containing only families outside a preferred role is preserved as a fallback; set the option to false to use every selected family in every band.
 
