@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Iterable
 import numpy as np
+from scipy.ndimage import gaussian_filter as numpy_gaussian_filter
+from scipy.ndimage import zoom as numpy_zoom
 
 from .components import (
     AnisotropicGaussianComponent, DifferenceOfGaussiansComponent,
@@ -35,11 +38,56 @@ def load_cupy():
     try:
         if cp.cuda.runtime.getDeviceCount() < 1:
             raise RuntimeError("CuPy is installed but no CUDA device is available")
+        # Device enumeration alone can succeed with a broken runtime/compiler
+        # setup.  Force a tiny allocation and kernel launch so selecting CuPy
+        # fails here, with a useful error, rather than halfway through a fit.
+        probe = cp.asarray((1.0,), dtype=cp.float64)
+        cp.sum(probe).get()
     except Exception as exc:
         if isinstance(exc, RuntimeError) and str(exc).startswith("CuPy is installed"):
             raise
         raise RuntimeError("CuPy could not initialize a CUDA device") from exc
     return cp, gaussian_filter
+
+
+@dataclass(frozen=True)
+class NumericBackend:
+    """NumPy/SciPy-compatible operations selected for one fit.
+
+    Public models and results deliberately remain NumPy objects.  ``to_numpy``
+    marks the few host/device boundaries used by preprocessing and proposal
+    analysis; candidate batches remain resident in :class:`CuPyCandidateScorer`.
+    """
+
+    name: str
+    xp: object
+    gaussian_filter: object
+    zoom: object
+
+    @property
+    def accelerated(self) -> bool:
+        return self.name == "cupy"
+
+    def to_numpy(self, value):
+        return self.xp.asnumpy(value) if self.accelerated else np.asarray(value)
+
+
+def numeric_backend(name: str) -> NumericBackend:
+    """Initialize the requested numerical backend.
+
+    CuPy is intentionally loaded only when explicitly requested.  This keeps
+    the base installation and the GUI's NumPy selection CUDA-independent.
+    """
+    if name == "numpy":
+        return NumericBackend("numpy", np, numpy_gaussian_filter, numpy_zoom)
+    if name != "cupy":
+        raise ValueError("compute backend must be 'numpy' or 'cupy'")
+    cp, gaussian_filter = load_cupy()
+    try:
+        from cupyx.scipy.ndimage import zoom
+    except ImportError as exc:
+        raise RuntimeError("the installed CuPy package does not provide cupyx.scipy.ndimage") from exc
+    return NumericBackend("cupy", cp, gaussian_filter, zoom)
 
 
 def _basis_batch(atoms, u, v, cp):

@@ -22,7 +22,20 @@ from procedural_texture_kernel.fitting import (
     _perlin_candidates, _refine_model_parameters, _refine_new_atom,
     _spectral_noise_candidate)
 from procedural_texture_kernel.texture_loss import TextureLoss, TextureLossWeights
-from procedural_texture_kernel.gpu import GPU_COMPONENT_TYPES, _basis_batch
+from procedural_texture_kernel.gpu import GPU_COMPONENT_TYPES, _basis_batch, numeric_backend
+
+
+def test_numpy_numeric_backend_is_lazy_and_round_trips_arrays():
+    backend = numeric_backend("numpy")
+    values = backend.xp.arange(6, dtype=float).reshape(2, 3)
+    assert backend.name == "numpy"
+    assert not backend.accelerated
+    assert np.array_equal(backend.to_numpy(values), values)
+
+
+def test_unknown_numeric_backend_is_rejected():
+    with pytest.raises(ValueError, match="compute backend"):
+        numeric_backend("cuda")
 
 def test_coordinates():
     u, v = coordinate_grid(4, 2); assert u.shape == (2,4); assert v.shape == (2,4)
