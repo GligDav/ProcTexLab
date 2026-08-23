@@ -162,7 +162,8 @@ def _refine_model_parameters(model: ProceduralTextureModel, target: np.ndarray,
             current_without_atom = full - atom.evaluate(u, v)
             refined = _refine_new_atom(
                 atom, current_without_atom, loss, u, v,
-                max(8, config.max_iterations // 2), config.max_frequency)
+                max(8, config.max_iterations // 2), config.max_frequency,
+                cancel_callback)
             before, _ = loss.evaluate(full)
             after, _ = loss.evaluate(
                 current_without_atom + refined.evaluate(u, v))
@@ -513,6 +514,7 @@ def _refine_new_atom(
     atom: object, current: np.ndarray, target_loss: TextureLoss,
     u: np.ndarray, v: np.ndarray, max_iterations: int,
     max_frequency: float = 32.0,
+    cancel_callback: "CancelCallback | None" = None,
 ) -> object:
     """Refine one atom against the translation-tolerant composite texture loss."""
     frequency_upper = max(float(max_frequency), .25)
@@ -730,6 +732,8 @@ def _refine_new_atom(
         return atom
     def objective(p: np.ndarray) -> float:
         """Evaluate one optimizer parameter vector against the texture loss."""
+        if cancel_callback is not None and cancel_callback():
+            raise RuntimeError("fitting cancelled")
         return target_loss.evaluate_total(current + make(p).evaluate(u, v))
     initial_loss = objective(x0)
     result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
@@ -830,6 +834,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         if not candidates: break
         def initialize(atom: object) -> tuple[float, object]:
             """Project one candidate and pair it with its initialization score."""
+            if cancel_callback is not None and cancel_callback():
+                raise RuntimeError("fitting cancelled")
             if isinstance(atom, SinusoidComponent):
                 score = float(np.mean((atom.amplitude * atom.basis(u, v))**2))
             else:
@@ -853,6 +859,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
             item: tuple[float, object],
         ) -> tuple[float, float, object]:
             """Measure a projected candidate's improvement in the full objective."""
+            if cancel_callback is not None and cancel_callback():
+                raise RuntimeError("fitting cancelled")
             score, atom = item
             # Pixel correlation initializes and, for the expensive local
             # structure objective, shortlists atoms. Final selection still uses
@@ -875,7 +883,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
         chosen = _refine_new_atom(chosen, current, loss, u, v,
-                                  config.max_iterations, config.max_frequency)
+                                  config.max_iterations, config.max_frequency,
+                                  cancel_callback)
         after, parts = loss.evaluate(current + chosen.evaluate(u, v))
         if before - after <= config.min_improvement:
             break
@@ -1052,6 +1061,8 @@ def fit_texture(
         The combined procedural model and detailed per-band fitting metadata.
     """
     started = time.perf_counter()
+    if cancel_callback is not None and cancel_callback():
+        raise RuntimeError("fitting cancelled")
     backend = numeric_backend(config.compute_backend)
     fit_target = _resize_for_fit(target, config.fitting_resolution, backend)
     h, w = fit_target.shape
@@ -1101,6 +1112,8 @@ def fit_texture(
         item: tuple[int, np.ndarray],
     ) -> tuple[ProceduralTextureModel, dict]:
         """Fit one indexed decomposition band for serial or worker execution."""
+        if cancel_callback is not None and cancel_callback():
+            raise RuntimeError("fitting cancelled")
         band_index, band_target = item
         callback = band_callback(band_index)
         callback("initialization", 0.0,

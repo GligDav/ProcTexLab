@@ -34,8 +34,14 @@ class TestApplication(tk.Tk):
     """Small visual harness; fitting runs on a worker thread."""
     def __init__(self):
         super().__init__(); self.title("Procedural Texture Kernel"); self.geometry("1100x720")
+        self.attributes("-fullscreen", True)
+        self.bind("<Escape>", lambda _event: self.attributes("-fullscreen", False))
+        self.bind("<F11>", self._toggle_fullscreen)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.source = None; self.result = None; self.images = [None, None, None]
         self.events = queue.Queue(); self.running = False; self.extent_job = None
+        self.cancel_event = threading.Event(); self.worker_thread = None
+        self.closing = False
         controls = ttk.Frame(self); controls.pack(fill="x", padx=8, pady=8)
         self.components = tk.IntVar(value=12); self.iterations = tk.IntVar(value=60)
         self.resolution = tk.IntVar(value=192); self.seed = tk.IntVar(value=0)
@@ -58,6 +64,10 @@ class TestApplication(tk.Tk):
             ttk.Entry(controls, textvariable=variable, width=6).pack(side="left")
         ttk.Button(controls, text="Load Image", command=self.load).pack(side="left", padx=8)
         self.fit_button = ttk.Button(controls, text="Fit", command=self.fit); self.fit_button.pack(side="left")
+        self.cancel_button = ttk.Button(controls, text="Cancel Fit", command=self.cancel_fit)
+        self.cancel_button.pack(side="left", padx=(4, 0)); self.cancel_button.state(["disabled"])
+        self.export_button = ttk.Button(controls, text="Export JSON", command=self.export_json)
+        self.export_button.pack(side="left", padx=(4, 0)); self.export_button.state(["disabled"])
         self.spectrum_button = ttk.Button(controls, text="Spectrum", command=self.show_spectrum)
         self.spectrum_button.pack(side="left", padx=(8, 0)); self.spectrum_button.state(["disabled"])
         self.measurements_button = ttk.Button(
@@ -195,6 +205,9 @@ class TestApplication(tk.Tk):
         image = Image.fromarray(np.uint8(values * 255), "L"); image.thumbnail((350, 470))
         photo = ImageTk.PhotoImage(image); self.images[slot] = photo; self.labels[slot].configure(image=photo)
 
+    def _toggle_fullscreen(self, _event=None):
+        self.attributes("-fullscreen", not bool(self.attributes("-fullscreen")))
+
     def _update_weight_controls(self):
         state = ["disabled"] if self.adaptive_weights.get() else ["!disabled"]
         for entry in self.statistical_weight_entries:
@@ -228,6 +241,7 @@ class TestApplication(tk.Tk):
         try: self.source = load_image(path)
         except ValueError as exc: messagebox.showerror("Load failed", str(exc)); return
         self.result = None; self.extent.set(1.0); self._show(self.source, 0)
+        self.export_button.state(["disabled"])
         self.spectrum_button.state(["disabled"])
         self.measurements_button.state(["disabled"])
         self.extent_value.configure(text="1.0×  ([0, 1)²)")
@@ -238,14 +252,56 @@ class TestApplication(tk.Tk):
         try:
             config = self._build_config()
         except (ValueError, tk.TclError) as exc: messagebox.showerror("Invalid settings", str(exc)); return
+        self.cancel_event.clear()
         self.running = True; self.fit_button.state(["disabled"])
+        self.cancel_button.state(["!disabled"])
         def worker():
             try:
                 result = TextureFitter(config).fit(self.source,
-                    lambda stage, value, msg: self.events.put(("progress", value, msg)))
+                    lambda stage, value, msg: self.events.put(("progress", value, msg)),
+                    self.cancel_event.is_set)
                 self.events.put(("result", result))
-            except Exception as exc: self.events.put(("error", exc))
-        threading.Thread(target=worker, daemon=True).start(); self.after(50, self._poll)
+            except Exception as exc:
+                event = "cancelled" if self.cancel_event.is_set() else "error"
+                self.events.put((event, exc))
+        self.worker_thread = threading.Thread(target=worker, name="texture-fit-controller")
+        self.worker_thread.start(); self.after(50, self._poll)
+
+    def cancel_fit(self):
+        """Request cooperative shutdown of the controller and kernel workers."""
+        if not self.running:
+            return
+        self.cancel_event.set()
+        self.cancel_button.state(["disabled"])
+        self.status.configure(text="Cancelling fit and stopping worker threads...")
+
+    def export_json(self):
+        if self.result is None:
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json", filetypes=[("JSON", "*.json"), ("All", "*.*")],
+            initialfile="fit.json")
+        if not path:
+            return
+        try:
+            self.result.save_json(path)
+        except OSError as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+        self.status.configure(text=f"Exported fit result to {path}")
+
+    def _on_close(self):
+        """Keep Tk alive until cooperative cancellation has joined all workers."""
+        self.closing = True
+        if self.running:
+            self.cancel_fit()
+        self._finish_close()
+
+    def _finish_close(self):
+        if self.worker_thread is not None and self.worker_thread.is_alive():
+            self.after(50, self._finish_close)
+            return
+        self.destroy()
 
     def show_spectrum(self):
         if self.result is None:
@@ -308,6 +364,7 @@ class TestApplication(tk.Tk):
                     result = event[1]; self.result = result
                     self.spectrum_button.state(["!disabled"])
                     self.measurements_button.state(["!disabled"])
+                    self.export_button.state(["!disabled"])
                     self._update_extent_preview(); self._show(result.residual, 2, True)
                     m = result.metrics
                     objective = result.metadata["objective"]
@@ -317,8 +374,17 @@ class TestApplication(tk.Tk):
                                    else f"detail {detail.get('reason', 'not accepted')}")
                     self.status.configure(text=f"Band objective {objective['final']:.6f} ({mode})   {detail_text}   Full-image texture loss {m['texture_loss']:.6f}   RMSE {m['rmse']:.5f}   PSNR {m['psnr']:.2f} dB")
                     self.running = False; self.fit_button.state(["!disabled"])
+                    self.cancel_button.state(["disabled"])
+                elif event[0] == "cancelled":
+                    self.running = False; self.fit_button.state(["!disabled"])
+                    self.cancel_button.state(["disabled"])
+                    self.progress["value"] = 0
+                    self.status.configure(text="Fit cancelled; worker threads stopped")
                 else:
-                    messagebox.showerror("Fit failed", str(event[1])); self.running = False; self.fit_button.state(["!disabled"])
+                    if not self.closing:
+                        messagebox.showerror("Fit failed", str(event[1]))
+                    self.running = False; self.fit_button.state(["!disabled"])
+                    self.cancel_button.state(["disabled"])
         except queue.Empty: pass
         if self.running: self.after(50, self._poll)
 

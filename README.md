@@ -44,7 +44,7 @@ print(result.model.components)
 result.save_json("fit.json")
 ```
 
-`FitResult` retains the full-resolution reconstruction, signed residual, metrics, and fitting history. `TextureFitter.fit` also accepts optional `progress_callback(stage, progress, message)` and `cancel_callback()` callables. Cancellation is checked between atom stages.
+`FitResult` retains the full-resolution reconstruction, signed residual, metrics, and fitting history. `TextureFitter.fit` also accepts optional `progress_callback(stage, progress, message)` and `cancel_callback()` callables. Cancellation is cooperative and is checked between fitting stages, candidate tasks, and nonlinear optimizer evaluations; parallel worker pools are shut down before cancellation returns.
 
 ## Architecture
 
@@ -242,7 +242,7 @@ Run the threaded development GUI:
 python -m gui.test_app
 ```
 
-It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
+It opens fullscreen by default; press **Escape** to leave fullscreen or **F11** to toggle it. It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled. **Cancel Fit** cooperatively stops the controller, band, and candidate workers; closing the window during a fit performs the same shutdown before destroying Tk.
 
 ### Development GUI input reference
 
@@ -319,6 +319,8 @@ The remaining controls affect workflow or display rather than model fitting.
 | --- | --- |
 | **Load Image** | Selects a Pillow-supported raster, converts color to luminance, normalizes it to `[0, 1]`, and clears the previous result. |
 | **Fit** | Validates all settings and starts a worker-thread fit. It is disabled while fitting. |
+| **Cancel Fit** | Requests cancellation of the current fit and waits for its controller and kernel worker pools to stop. Window close uses the same path. |
+| **Export JSON** | Writes the completed `FitResult`—model, metrics, and fitting metadata—to a chosen JSON file. |
 | **Spectrum** | Opens source/reconstruction radial power-spectrum diagnostics after a fit. |
 | **Measurements** | Opens contrast, gradient, edge-density, local-contrast, and directional-energy diagnostics after a fit. |
 | **Result UV extent** | Changes only the continuation preview from `[0, 1)²` up to `[0, 4)²`. It neither refits nor mutates the model; larger extents reveal procedural continuation and repetition. |
