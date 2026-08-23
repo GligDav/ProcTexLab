@@ -83,7 +83,8 @@ class FitConfig:
     parameter_refinement_passes: int = 1
     parameter_refinement_atom_limit: int = 8
     band_aware_candidates: bool = True
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Validate all fitting, objective, decomposition, and backend controls."""
         allowed = set(SUPPORTED_COMPONENT_FAMILIES)
         if self.max_components < 0 or self.max_iterations < 1 or self.fft_candidates < 1:
             raise ValueError("component/iteration/candidate counts are invalid")
@@ -191,6 +192,7 @@ class FitResult:
     residual: np.ndarray = field(repr=False)
     metadata: dict = field(default_factory=dict)
     def evaluate(self, width: int, height: int) -> np.ndarray:
+        """Evaluate the fitted model as a ``(height, width)`` float image."""
         return self.model.evaluate(width, height)
     def evaluate_region(
         self, width: int, height: int,
@@ -200,16 +202,32 @@ class FitResult:
         """Evaluate the fitted model outside its original UV domain."""
         return self.model.evaluate_region(width, height, u_bounds, v_bounds)
     def to_dict(self) -> dict:
+        """Return the serializable model, metrics, and fitting metadata."""
         return {"schema_version": 1, "model": self.model.to_dict(), "metrics": self.metrics,
                 "metadata": self.metadata}
     def save_json(self, path: str | Path) -> None:
+        """Write the serializable fit result to a UTF-8 JSON file."""
         Path(path).write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
 
 class TextureFitter:
     """Fit scalar rasters to a sparse procedural model."""
-    def __init__(self, config: FitConfig | None = None): self.config = config or FitConfig()
+    def __init__(self, config: FitConfig | None = None) -> None:
+        """Create a fitter using validated ``config`` or the default controls."""
+        self.config = config or FitConfig()
     def fit(self, image_array: np.ndarray, progress_callback: ProgressCallback | None = None,
             cancel_callback: CancelCallback | None = None) -> FitResult:
+        """Normalize and fit an image, returning its model and diagnostics.
+
+        Args:
+            image_array: Grayscale, RGB, or RGBA raster accepted by
+                :func:`normalize_image`.
+            progress_callback: Optional ``(stage, fraction, message)`` reporter.
+            cancel_callback: Optional predicate checked during long fitting work.
+
+        Returns:
+            A :class:`FitResult` containing the procedural model, reconstruction,
+            signed residual, metrics, and fitting metadata.
+        """
         target = normalize_image(np.asarray(image_array))
         model, metadata = fit_texture(target, self.config, progress_callback, cancel_callback)
         reconstruction = model.evaluate(target.shape[1], target.shape[0])

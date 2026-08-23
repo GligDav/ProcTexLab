@@ -13,6 +13,7 @@ GRAPH_OPERATIONS = frozenset({
 
 @dataclass
 class ShaderNode:
+    """One scalar operation in a topologically ordered procedural graph."""
     node_id: str
     operation: str
     inputs: tuple[str, ...] = ()
@@ -22,6 +23,7 @@ class ShaderNode:
     edge1: float = 0.08
 
     def to_dict(self) -> dict:
+        """Return a JSON-serializable description of this operation node."""
         result = {"id": self.node_id, "operation": self.operation,
                   "inputs": list(self.inputs)}
         if self.operation == "component":
@@ -34,6 +36,7 @@ class ShaderNode:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ShaderNode":
+        """Construct and validate a shader node from a plain mapping."""
         operation = data.get("operation")
         component = (component_from_dict(data["component"])
                      if operation == "component" else None)
@@ -45,10 +48,12 @@ class ShaderNode:
 
 @dataclass
 class ShaderGraph:
+    """Serializable directed acyclic graph of scalar UV operations."""
     nodes: list[ShaderNode] = field(default_factory=list)
     output_node: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Validate node names, references, operation names, and graph order."""
         if not self.nodes:
             raise ValueError("shader graph must contain at least one node")
         if len(self.nodes) > 64:
@@ -73,7 +78,8 @@ class ShaderGraph:
         if self.output_node not in seen:
             raise ValueError("shader graph output node does not exist")
 
-    def evaluate(self, u, v):
+    def evaluate(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the graph output on matching UV coordinate grids."""
         values = {}
         for node in self.nodes:
             args = [values[source] for source in node.inputs]
@@ -96,11 +102,13 @@ class ShaderGraph:
         return values[self.output_node]
 
     def to_dict(self) -> dict:
+        """Return a JSON-serializable graph mapping."""
         return {"nodes": [node.to_dict() for node in self.nodes],
                 "output_node": self.output_node}
 
     @classmethod
     def from_dict(cls, data: dict) -> "ShaderGraph":
+        """Deserialize a graph mapping and run structural validation."""
         return cls([ShaderNode.from_dict(item) for item in data.get("nodes", ())],
                    str(data.get("output_node", "")))
 
@@ -111,12 +119,14 @@ class ShaderGraphComponent(ProceduralComponent):
     graph: ShaderGraph | None = None
     type_name = "shader_graph"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the wrapped shader graph as a component basis."""
         if self.graph is None:
             raise ValueError("shader graph component requires a graph")
         return self.graph.evaluate(u, v)
 
     def to_dict(self) -> dict:
+        """Serialize the component amplitude and nested graph."""
         if self.graph is None:
             raise ValueError("shader graph component requires a graph")
         return {"type": self.type_name, "amplitude": float(self.amplitude),
@@ -124,4 +134,5 @@ class ShaderGraphComponent(ProceduralComponent):
 
     @classmethod
     def from_dict(cls, data: dict) -> "ShaderGraphComponent":
+        """Deserialize a shader-graph component mapping."""
         return cls(float(data.get("amplitude", 1.0)), ShaderGraph.from_dict(data["graph"]))

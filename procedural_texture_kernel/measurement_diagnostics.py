@@ -9,6 +9,7 @@ DEFAULT_CONTRAST_SCALES = (1.0, 2.0, 4.0, 8.0)
 
 
 def _images(target: np.ndarray, result: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Validate two matching images and return float64 views of both."""
     first = np.asarray(target, dtype=np.float64)
     second = np.asarray(result, dtype=np.float64)
     if (first.ndim != 2 or first.size == 0 or not np.all(np.isfinite(first))
@@ -20,6 +21,7 @@ def _images(target: np.ndarray, result: np.ndarray) -> tuple[np.ndarray, np.ndar
 
 
 def _ratio(target: float, result: float) -> float:
+    """Return the result-to-target ratio with stable near-zero handling."""
     epsilon = np.finfo(float).eps * max(abs(target), abs(result), 1.0)
     if abs(target) <= epsilon and abs(result) <= epsilon:
         return 1.0
@@ -27,6 +29,7 @@ def _ratio(target: float, result: float) -> float:
 
 
 def _gradient_magnitude(image: np.ndarray) -> np.ndarray:
+    """Return per-pixel Euclidean gradient magnitudes for a 2D image."""
     dy = (np.gradient(image, axis=0) if image.shape[0] > 1
           else np.zeros_like(image))
     dx = (np.gradient(image, axis=1) if image.shape[1] > 1
@@ -35,12 +38,14 @@ def _gradient_magnitude(image: np.ndarray) -> np.ndarray:
 
 
 def _local_contrast(image: np.ndarray, sigma: float) -> np.ndarray:
+    """Estimate local standard deviation using Gaussian moments at ``sigma``."""
     mean = gaussian_filter(image, sigma, mode="reflect")
     mean_square = gaussian_filter(image * image, sigma, mode="reflect")
     return np.sqrt(np.maximum(mean_square - mean * mean, 0.0))
 
 
 def _oriented_spectrum(image: np.ndarray, orientations: int) -> np.ndarray:
+    """Accumulate windowed Fourier power into half-circle orientation wedges."""
     height, width = image.shape
     window = np.outer(np.hanning(height), np.hanning(width))
     transformed = np.fft.fft2((image - np.mean(image)) * window)
@@ -57,8 +62,19 @@ def _oriented_spectrum(image: np.ndarray, orientations: int) -> np.ndarray:
 
 def compare_measurements(target: np.ndarray, result: np.ndarray,
                          orientations: int = 8,
-                         contrast_scales=DEFAULT_CONTRAST_SCALES) -> dict:
-    """Compare absolute contrast, gradient, and directional spectral energy."""
+                         contrast_scales: tuple[float, ...] = DEFAULT_CONTRAST_SCALES
+                         ) -> dict[str, object]:
+    """Compare absolute contrast, gradient, and directional spectral energy.
+
+    Args:
+        target: Finite reference image.
+        result: Finite candidate image with the same shape as ``target``.
+        orientations: Number of directional Fourier wedges over 180 degrees.
+        contrast_scales: Positive Gaussian sigmas for local-contrast summaries.
+
+    Returns:
+        Nested serializable measurements, including target/result ratios.
+    """
     target, result = _images(target, result)
     if isinstance(orientations, bool) or not isinstance(orientations, int) or orientations < 2:
         raise ValueError("orientations must be an integer of at least two")
@@ -68,11 +84,13 @@ def compare_measurements(target: np.ndarray, result: np.ndarray,
 
     target_gradient = _gradient_magnitude(target)
     result_gradient = _gradient_magnitude(result)
+    # Use the reference tail as a shared edge threshold for comparable densities.
     edge_threshold = float(np.percentile(target_gradient, 90))
     has_target_edges = edge_threshold > np.finfo(float).eps
     summaries = []
 
     def add(name: str, target_value: float, result_value: float, unit: str = "") -> None:
+        """Append one scalar target/result summary to the output list."""
         summaries.append({"name": name, "target": float(target_value),
                           "result": float(result_value),
                           "ratio": _ratio(float(target_value), float(result_value)),

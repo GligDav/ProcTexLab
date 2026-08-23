@@ -244,6 +244,85 @@ python -m gui.test_app
 
 It loads common raster formats, edits the principal settings, shows progress, and displays source, reconstruction, contrast-scaled residual, and metrics. The **Allowed procedural atoms** checkboxes enable or disable the registered component families; at least one must remain selected. Under **Texture loss weights**, per-band estimation is enabled by default and disables the four overridden statistical fields. Clear the checkbox to use them manually. MSE remains editable in both modes. Weights must be finite and non-negative, and at least one must be positive. The **Min improvement** field sets the minimum decrease in composite texture loss required to retain another atom; lowering it permits smaller statistical improvements and potentially larger models. The **Result UV extent** slider evaluates `[0, extent)²` at a bounded preview resolution, making procedural continuation and repetition visible without changing the fitted model. Tk widgets are updated only on the main thread and duplicate fits are disabled.
 
+### Development GUI input reference
+
+`gui/test_app.py` exposes the following fitting inputs. Increasing a budget
+usually broadens the search at the cost of time and memory, but does not
+guarantee a better result because atoms are retained only when they improve the
+configured objective.
+
+| Input | Purpose and influence on the result |
+| --- | --- |
+| **Components** | Maximum atoms accepted per decomposition band. More atoms permit a more complex, slower model; zero leaves only the fitted bias/plane. |
+| **Iterations** | Maximum nonlinear optimizer iterations for each proposed atom. Higher values tune parameters more thoroughly and take longer. |
+| **Fit resolution** | Maximum image dimension used during optimization. Larger sources are anti-aliased and downsampled, although final diagnostics use source resolution. Higher values retain finer evidence and cost more memory/time. |
+| **Bands** | Number of independently fitted, additive Laplacian bands. More bands isolate scales more finely but multiply work; one disables decomposition. |
+| **Seed** | Controls deterministic stochastic candidate generation. Changing it explores different noise and impulse candidates. |
+| **Noise seeds** | Number of consecutive seeds tried for each eligible noise family and frequency. More seeds broaden and slow the search. |
+| **Max freq (0=auto)** | Highest cycles per normalized UV interval. Zero chooses an image-dependent anti-aliasing limit. Higher values admit finer atoms; lower values suppress fine detail. |
+| **Min improvement** | Smallest composite-loss decrease needed to accept an atom. Raising it stops weak additions sooner; lowering it can retain subtler components. |
+
+Texture-loss weights are normalized by their sum, so their ratios matter more
+than their absolute scale.
+
+| Input | Purpose and influence on the result |
+| --- | --- |
+| **Estimate statistical weights per band** | Derives Spectrum, Histogram, Autocorrelation, and Gradient weights from each band's entropy, directionality, repetition, and edge coherence. When selected, those four entries are disabled; the other weights remain manual. |
+| **Spectrum** | Matches normalized multiscale log-power spectra, emphasizing frequency distribution rather than absolute energy. |
+| **Absolute spectrum** | Matches absolute Fourier energy in radial bands, discouraging too little or too much texture contrast. |
+| **Oriented spectrum** | Matches absolute spectral energy by frequency band and direction, helping aligned grain and stripes. |
+| **Histogram** | Matches cumulative tonal distributions without requiring corresponding pixels to align. |
+| **Autocorrelation** | Matches cyclic spatial correlation and repetition around the origin. |
+| **Gradient** | Matches multiscale edge magnitudes and orientation distributions. |
+| **MSE** | Matches pixels directly. More weight favors spatial alignment and restrains statistically plausible but displaced results. |
+| **Local structure** | Matches oriented-filter magnitudes and cross-scale relationships. It captures richer structure but is one of the most expensive terms. |
+| **Local contrast** | Matches distributions of neighborhood standard deviation at several scales. |
+
+The high-frequency section controls an optional detail-only pass after combining
+the fitted bands.
+
+| Input | Purpose and influence on the result |
+| --- | --- |
+| **Enable when HF ratio is below threshold** | Fits the high-pass residual when reconstructed high-frequency energy is deficient. The detail model is retained only when it improves that deficit and does not worsen enabled MSE. |
+| **Detail atoms** | Maximum atoms in the extra detail fit. More allow finer recovery and take longer; zero prevents useful refinement. |
+| **Min frequency** | Lowest detail-atom frequency. Raising it focuses the pass on finer structure. |
+| **HF threshold** | Triggers the pass when result-to-target high-frequency energy is below this ratio. Values nearer one trigger on smaller deficits. |
+| **Band workers** | Laplacian bands fitted concurrently. More workers may reduce elapsed time while increasing simultaneous CPU and memory use. |
+| **Candidate workers** | CPU threads used to initialize and score candidates inside a band. More can accelerate expensive pools but add overhead. |
+| **Backend** | `numpy` uses CPU arrays. `cupy` requests CUDA and requires compatible optional CuPy plus a usable device. |
+| **GPU batch** | Homogeneous candidates evaluated together on CUDA. Larger batches reduce launch overhead but use more device memory; this does not affect NumPy fitting. |
+| **Spectral modes** | Strongest Fourier modes stored in a spectral-noise bundle. More modes reproduce broader detail in one atom at greater evaluation/serialization cost. |
+
+The joint-refinement section revisits atoms already accepted by the greedy fit.
+
+| Input | Purpose and influence on the result |
+| --- | --- |
+| **Jointly refit amplitudes** | Periodically solves the bias, plane, and every atom amplitude together. A refit is reverted if it worsens the objective. |
+| **Every N accepted atoms** | Interval between amplitude refits. Smaller values refit more often and cost more. |
+| **Refine recent atom parameters at end** | Runs end-of-band nonlinear refinement on recent atoms and keeps only objective improvements. |
+| **Passes** | Maximum parameter-refinement passes. More passes cost more; processing stops early when none improve. |
+| **Recent atoms** | Maximum most-recent atoms revisited per pass. Increasing it exposes more of the model to refinement. |
+| **Band-aware atom roles** | Favors detail families in high-frequency bands and structural families in low-frequency bands. Disabling it offers all enabled families to every band. |
+
+Every **Allowed procedural atoms** checkbox determines whether that family can be
+proposed. Oscillatory/detail families include sinusoid, spectral noise, Gabor,
+wavelet, DoG/LoG, sparse impulse, and line. Geometric families include Gaussian,
+edge, polynomial, radial/spiral, constant, and binary primitives. The Perlin,
+thresholded/masked, Voronoi, fBm, turbulence, ridged, warped, ridge-detail, and
+shader-graph families describe stochastic or coherent regions. Disabling a
+family narrows and speeds the search but prevents its representation from being
+used; at least one family must remain enabled.
+
+The remaining controls affect workflow or display rather than model fitting.
+
+| Input | Purpose and influence on the result |
+| --- | --- |
+| **Load Image** | Selects a Pillow-supported raster, converts color to luminance, normalizes it to `[0, 1]`, and clears the previous result. |
+| **Fit** | Validates all settings and starts a worker-thread fit. It is disabled while fitting. |
+| **Spectrum** | Opens source/reconstruction radial power-spectrum diagnostics after a fit. |
+| **Measurements** | Opens contrast, gradient, edge-density, local-contrast, and directional-energy diagnostics after a fit. |
+| **Result UV extent** | Changes only the continuation preview from `[0, 1)²` up to `[0, 4)²`. It neither refits nor mutates the model; larger extents reveal procedural continuation and repetition. |
+
 After a fit, the **Spectrum** button opens the full-resolution target/result
 diagnostics: absolute radial PSD curves on a logarithmic scale, per-band absolute
 and normalized energies, and the combined high-frequency energy ratio.
