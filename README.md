@@ -465,6 +465,39 @@ pixel-aligned proposals.
 
 The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, broader/adaptive noise seed searches, discrete wavelet decompositions, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
 
+## Blender add-on
+
+The `blender_addon` package imports a fitter result JSON into Blender 4.5 LTS as
+an editable scalar shader node group and material. It accepts both a complete
+`FitResult` envelope and a bare schema-v1 model. The generated material converts
+Blender UV coordinates to the fitter's top-left, V-down coordinate convention,
+keeps the signed model value available on the group, and routes a clamped copy to
+Principled BSDF Roughness by default. Base Color, Metallic, Alpha, Emission
+Strength, and Bump routing are also available in the import dialog.
+
+To install it:
+
+1. Create a ZIP whose top-level folder is `blender_addon` (the folder containing
+   `__init__.py`). From the repository root, PowerShell users can run
+   `Compress-Archive -Path blender_addon -DestinationPath ptk_blender_addon.zip`.
+2. In Blender, open **Edit > Preferences > Add-ons**, choose **Install from
+   Disk**, select the ZIP, and enable **Procedural Texture Kernel Importer**.
+3. Select a mesh, open **Material Properties > Procedural Texture Kernel**, and
+   choose **Import PTK Fitter Result**. Select a fitter JSON such as
+   `blender_addon/example_result.json`.
+
+Analytic component families and spectral bundles are translated literally.
+Seeded Perlin/composite noise, Voronoi, and sparse-impulse families do not match
+Blender's native texture algorithms; importing a model containing those families
+therefore stops unless **Compact (Approximate)** is explicitly enabled. Every
+approximation is reported and saved in material custom properties. Large spectral
+models show an estimated node count and are protected by a configurable hard
+limit. Reimport builds and validates a replacement group before swapping it into
+the material, preserving user routing if an import fails.
+
+The add-on uses only Blender's bundled Python standard library and `bpy`, so it
+does not add project or Blender Python dependencies.
+
 ## Future Blender integration
 
 The intended boundary is:

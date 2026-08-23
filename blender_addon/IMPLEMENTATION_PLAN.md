@@ -10,7 +10,7 @@ The imported scalar is suitable for non-color material channels such as Roughnes
 
 ## Input contract
 
-`fit.json` is a fit-result envelope:
+`example_result.json` is a fit-result envelope:
 
 ```text
 {
@@ -120,7 +120,7 @@ Implement in three milestones:
 2. **Exact deterministic primitives:** the kernel's seeded gradient noise, hash functions, Voronoi, and sparse impulses, followed by all composite noise families.
 3. **Optional compact approximation mode:** use native Blender Noise/Voronoi/Gabor nodes when the user explicitly accepts approximation.
 
-`fit.json` currently contains many `spectral_noise` components, each with many Fourier modes. A literal graph can therefore contain thousands of Math nodes. The operator must estimate node count before creation and show the estimate in its confirmation text. Provide:
+`example_result.json` currently contains many `spectral_noise` components, each with many Fourier modes. A literal graph can therefore contain thousands of Math nodes. The operator must estimate node count before creation and show the estimate in its confirmation text. Provide:
 
 - a configurable hard node limit;
 - cancellation/progress reporting between component builds;
@@ -296,7 +296,7 @@ Automate validation with Blender background mode and small fixtures, not with th
 4. Test the V flip with asymmetric values and off-center components; a symmetric texture will not detect the error.
 5. Test JSON envelope and bare-model inputs, NaN/Infinity rejection, unknown types, malformed spectral arrays, safety limits, cancellation, rollback, assignment, and reimport.
 6. Test both Cycles and Eevee rendering for the native node backend.
-7. Load `fit.json` as an integration/performance case and record node count, import time, `.blend` size, shader compile time, and viewport responsiveness.
+7. Load `example_result.json` as an integration/performance case and record node count, import time, `.blend` size, shader compile time, and viewport responsiveness.
 
 Definition of done for exact mode: every registered schema-v1 component imports without raster data, invalid data fails before material mutation, and sampled values agree with the kernel within the chosen floating-point tolerance. Definition of done for approximate mode: every approximation is opt-in, visibly reported, and stored in material metadata.
 

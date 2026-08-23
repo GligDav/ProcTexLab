@@ -1,0 +1,6 @@
+"""Component builder registry."""
+from .analytic import ANALYTIC_BUILDERS
+from .noise import APPROXIMATE_BUILDERS
+
+BUILDERS = {**ANALYTIC_BUILDERS, **APPROXIMATE_BUILDERS}
+APPROXIMATE_TYPES = frozenset(APPROXIMATE_BUILDERS)
