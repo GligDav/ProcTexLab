@@ -18,16 +18,31 @@ NODE_TAG = "ptk_model_node"
 def estimate_node_count(model, approximate=False):
     total = 12
     for c in model["components"]:
-        if c["type"] == "spectral_noise": total += 7 * len(c["weights"]) + 3
+        if c["type"] == "shader_graph":
+            nested = [node["component"] for node in c["graph"]["nodes"] if node["operation"] == "component"]
+            total += len(c["graph"]["nodes"]) * 4 + estimate_node_count({"components": nested}, approximate)
+        elif c["type"] == "spectral_noise": total += 7 * len(c["weights"]) + 3
         elif c["type"] in APPROXIMATE_TYPES: total += 8 if approximate else 1000
         else: total += 24
     return total
 
 
+def _approximate_components(components, prefix=""):
+    result = []
+    for index, component in enumerate(components):
+        path = f"{prefix}{index}"
+        if component["type"] in APPROXIMATE_TYPES:
+            result.append((path, component["type"]))
+        elif component["type"] == "shader_graph":
+            embedded = [node["component"] for node in component["graph"]["nodes"] if node["operation"] == "component"]
+            result.extend(_approximate_components(embedded, path + ".graph.component."))
+    return result
+
+
 def build_model_group(model, name, allow_approximate=False, node_limit=100000, progress=None):
-    approximate = [(i, c["type"]) for i, c in enumerate(model["components"]) if c["type"] in APPROXIMATE_TYPES]
+    approximate = _approximate_components(model["components"])
     if approximate and not allow_approximate:
-        details = ", ".join(f"{kind} at {index}" for index, kind in approximate[:8])
+        details = ", ".join(f"{kind} at {path}" for path, kind in approximate[:8])
         raise PTKImportError(f"Exact node translation is unavailable for: {details}. Enable Compact (Approximate) explicitly.")
     estimate = estimate_node_count(model, allow_approximate)
     if estimate > node_limit:
@@ -59,7 +74,7 @@ def build_model_group(model, name, allow_approximate=False, node_limit=100000, p
         tree.links.new(n.balanced_add(terms), outputs.inputs["Value"])
         tree["ptk_approximate"] = bool(approximate)
         tree["ptk_estimated_nodes"] = estimate
-        return tree, [f"{kind} component {index} uses a native Blender approximation" for index, kind in approximate]
+        return tree, [f"{kind} component {path} uses a native Blender approximation" for path, kind in approximate]
     except Exception:
         bpy.data.node_groups.remove(tree)
         raise

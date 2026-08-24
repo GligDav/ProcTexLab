@@ -59,7 +59,6 @@ def wavelet(n, u, v, c):
 def line(n, u, v, c):
     x, y = _rotated(n, u, v, c)
     d = n.math("MAXIMUM", n.sub(n.math("ABSOLUTE", y), c["width"] / 2), n.sub(n.math("ABSOLUTE", x), c["length"] / 2))
-    z = n.math("CLAMP", n.div(d, max(c["softness"], 1e-12)))
     # Logistic written as 1/(1+exp(clamp(d/s,-60,60))). Blender Clamp is [0,1],
     # so use explicit min/max for the kernel's symmetric clamp.
     z = n.math("MINIMUM", n.math("MAXIMUM", n.div(d, max(c["softness"], 1e-12)), -60), 60)

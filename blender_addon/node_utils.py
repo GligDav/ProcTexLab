@@ -39,6 +39,15 @@ class Nodes:
     def div(self, a, b): return self.math("DIVIDE", a, b)
     def power(self, a, b): return self.math("POWER", a, b)
 
+    def clamp(self, value, minimum=0.0, maximum=1.0):
+        """Clamp with Blender's dedicated node (CLAMP is not a Math operation)."""
+        node = self.nodes.new("ShaderNodeClamp")
+        node.name = self._name("Clamp"); node.label = "Clamp"
+        self._input(node.inputs["Value"], value)
+        self._input(node.inputs["Min"], minimum)
+        self._input(node.inputs["Max"], maximum)
+        return node.outputs["Result"]
+
     def balanced_add(self, values):
         values = list(values)
         if not values: return self.value(0.0)

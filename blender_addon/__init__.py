@@ -1,7 +1,7 @@
 """Blender add-on entry point for PTK fitter results."""
 bl_info = {
     "name": "Procedural Texture Kernel Importer", "author": "ProcTexLab contributors",
-    "version": (1, 0, 0), "blender": (4, 5, 0), "location": "Material Properties",
+    "version": (1, 0, 2), "blender": (4, 5, 0), "location": "Material Properties",
     "description": "Import PTK schema-v1 fitter JSON as an editable shader graph", "category": "Material",
 }
 

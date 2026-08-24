@@ -1,9 +1,6 @@
 """Compact, explicitly approximate native Blender noise translations."""
 from __future__ import annotations
 
-from ..compatibility import socket
-
-
 def _vector(tree, n, u, v, scale=1.0, offset_u=0.0, offset_v=0.0):
     combine = tree.nodes.new("ShaderNodeCombineXYZ")
     n.links.new(n.add(n.mul(u, scale), offset_u), combine.inputs["X"])
@@ -28,7 +25,7 @@ def voronoi(tree, n, u, v, c):
     node = tree.nodes.new("ShaderNodeTexVoronoi"); node.distance = "EUCLIDEAN"; node.feature = "F1"
     tree.links.new(_vector(tree, n, u, v, c["frequency"], c["offset_u"] + c.get("seed", 0) * 11.3, c["offset_v"]), node.inputs["Vector"])
     node.inputs["Scale"].default_value = 1.0; node.inputs["Randomness"].default_value = c["jitter"]
-    basis = n.math("CLAMP", n.sub(1, n.mul(2 ** .5, node.outputs["Distance"])))
+    basis = n.clamp(n.sub(1, n.mul(2 ** .5, node.outputs["Distance"])), -1.0, 1.0)
     return n.mul(c["amplitude"], basis)
 
 

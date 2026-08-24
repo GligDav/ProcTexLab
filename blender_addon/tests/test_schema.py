@@ -44,3 +44,23 @@ def test_example_result_validates():
     document = schema.load_document(Path(__file__).parents[1] / "example_result.json")
     validated = schema.validate_document(document)
     assert validated["components"]
+
+
+def test_shader_graph_validates_embedded_components():
+    component = {"type": "shader_graph", "amplitude": 0.5, "graph": {
+        "nodes": [
+            {"id": "wave", "operation": "component", "inputs": [], "component": {
+                "type": "sinusoid", "amplitude": 1.0, "frequency_u": 2.0,
+                "frequency_v": 0.0, "phase": 0.0}},
+            {"id": "mask", "operation": "smoothstep", "inputs": ["wave"],
+             "edge0": -0.1, "edge1": 0.1},
+        ], "output_node": "mask"}}
+    assert schema.validate_document(model([component]))["components"][0] is component
+
+
+def test_shader_graph_rejects_forward_references():
+    component = {"type": "shader_graph", "amplitude": 1.0, "graph": {
+        "nodes": [{"id": "bad", "operation": "one_minus", "inputs": ["later"]}],
+        "output_node": "bad"}}
+    with pytest.raises(schema.PTKImportError, match="earlier nodes"):
+        schema.validate_document(model([component]))

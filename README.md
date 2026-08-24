@@ -477,9 +477,9 @@ Strength, and Bump routing are also available in the import dialog.
 
 To install it:
 
-1. Create a ZIP whose top-level folder is `blender_addon` (the folder containing
-   `__init__.py`). From the repository root, PowerShell users can run
-   `Compress-Archive -Path blender_addon -DestinationPath ptk_blender_addon.zip`.
+1. From the repository root, run `python blender_addon/build_addon.py`. This
+   creates a clean `ptk_blender_addon-1.0.2.zip` without Python caches or test
+   data; its top-level folder is `blender_addon`.
 2. In Blender, open **Edit > Preferences > Add-ons**, choose **Install from
    Disk**, select the ZIP, and enable **Procedural Texture Kernel Importer**.
 3. Select a mesh, open **Material Properties > Procedural Texture Kernel**, and

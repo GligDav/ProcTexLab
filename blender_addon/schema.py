@@ -31,6 +31,7 @@ FIELDS = {
     "sparse_impulse": ("amplitude", "density", "radius"),
     "binary_primitive": ("amplitude", "center_u", "center_v", "size_u", "size_v", "orientation", "thickness"),
     "simple_constant": ("amplitude", "value"),
+    "shader_graph": ("amplitude",),
     "perlin_noise": ("amplitude", "frequency", "persistence", "lacunarity", "offset_u", "offset_v"),
     "fbm": ("amplitude", "frequency", "persistence", "lacunarity", "offset_u", "offset_v"),
     "turbulence_noise": ("amplitude", "frequency", "persistence", "lacunarity", "offset_u", "offset_v"),
@@ -111,6 +112,46 @@ def validate_document(document: object, max_components=DEFAULT_MAX_COMPONENTS,
             if len(lengths) != 1:
                 raise PTKImportError(f"{prefix}: spectral arrays must have equal lengths")
             modes += lengths.pop()
+        if kind == "shader_graph":
+            graph = component.get("graph")
+            if not isinstance(graph, dict) or not isinstance(graph.get("nodes"), list):
+                raise PTKImportError(f"{prefix}.graph.nodes must be a list")
+            nodes = graph["nodes"]
+            if not 1 <= len(nodes) <= 64:
+                raise PTKImportError(f"{prefix}.graph must contain between 1 and 64 nodes")
+            seen = set()
+            arity = {"component": 0, "constant": 0, "one_minus": 1,
+                     "smoothstep": 1, "add": 2, "multiply": 2, "mix": 3}
+            for graph_index, graph_node in enumerate(nodes):
+                node_path = f"{prefix}.graph.nodes[{graph_index}]"
+                if not isinstance(graph_node, dict):
+                    raise PTKImportError(f"{node_path} must be an object")
+                node_id, operation = graph_node.get("id"), graph_node.get("operation")
+                inputs = graph_node.get("inputs", [])
+                if not isinstance(node_id, str) or not node_id or node_id in seen:
+                    raise PTKImportError(f"{node_path}.id must be non-empty and unique")
+                if operation not in arity:
+                    raise PTKImportError(f"{node_path}.operation is unsupported")
+                if not isinstance(inputs, list) or len(inputs) != arity[operation]:
+                    raise PTKImportError(f"{node_path}.inputs has invalid arity")
+                if any(source not in seen for source in inputs):
+                    raise PTKImportError(f"{node_path}.inputs must reference earlier nodes")
+                if operation == "component":
+                    embedded = graph_node.get("component")
+                    nested = {"schema_version": 1, "coordinate_system": COORDINATE_SYSTEM,
+                              "components": [embedded]}
+                    validate_document(nested, max_components=max_components,
+                                      max_spectral_modes=max_spectral_modes)
+                elif operation == "constant":
+                    _finite(graph_node.get("value", 0.0), f"{node_path}.value")
+                elif operation == "smoothstep":
+                    edge0 = _finite(graph_node.get("edge0", -0.08), f"{node_path}.edge0")
+                    edge1 = _finite(graph_node.get("edge1", 0.08), f"{node_path}.edge1")
+                    if edge1 <= edge0:
+                        raise PTKImportError(f"{node_path}.edge1 must exceed edge0")
+                seen.add(node_id)
+            if graph.get("output_node") not in seen:
+                raise PTKImportError(f"{prefix}.graph.output_node does not exist")
         if kind == "dog_log" and component.get("mode", "dog") not in {"dog", "log"}:
             raise PTKImportError(f"{prefix}.mode must be 'dog' or 'log'")
         if kind == "binary_primitive" and component.get("shape") not in {"disk", "box", "ring", "checker"}:
