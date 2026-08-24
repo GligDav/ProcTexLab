@@ -24,6 +24,7 @@ class BandFeatures:
     raw_excess_kurtosis: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
+        """Return all extracted descriptor values as a plain mapping."""
         return asdict(self)
 
 
@@ -37,15 +38,18 @@ class LossWeights:
     gradient: float
 
     def to_dict(self) -> dict[str, float]:
+        """Return the four normalized statistical loss weights by name."""
         return asdict(self)
 
 
 @dataclass(frozen=True)
 class WeightEstimatorResult:
+    """Feature descriptors and the loss weights derived from them."""
     features: BandFeatures
     weights: LossWeights
 
     def to_dict(self) -> dict[str, dict[str, float]]:
+        """Return nested serializable feature and weight mappings."""
         return {"features": self.features.to_dict(), "weights": self.weights.to_dict()}
 
 
@@ -63,6 +67,7 @@ class WeightMappingConfig:
     gradient: tuple[float, ...] = (0.25, 0.00, 0.30, 0.00, 0.80, 0.00)
 
     def __post_init__(self) -> None:
+        """Validate every feature-to-weight coefficient vector."""
         for name in ("spectrum", "histogram", "autocorrelation", "gradient"):
             values = getattr(self, name)
             if len(values) != 6 or not np.all(np.isfinite(values)) or np.any(np.asarray(values) < 0):
@@ -79,6 +84,7 @@ class WeightEstimatorConfig:
     mapping: WeightMappingConfig = field(default_factory=WeightMappingConfig)
 
     def __post_init__(self) -> None:
+        """Validate numerical tolerances and heuristic scale parameters."""
         if not np.isfinite(self.epsilon) or self.epsilon <= 0:
             raise ValueError("epsilon must be finite and positive")
         if not 0 <= self.autocorrelation_percentile <= 100:
@@ -91,9 +97,11 @@ class BandFeatureExtractor:
     """Extract descriptors while sharing one FFT across spectral/ACF metrics."""
 
     def __init__(self, config: WeightEstimatorConfig | None = None) -> None:
+        """Create an extractor using ``config`` or deterministic defaults."""
         self.config = config or WeightEstimatorConfig()
 
     def extract(self, band: np.ndarray) -> BandFeatures:
+        """Measure normalized spectral, correlation, edge, and kurtosis features."""
         image = np.asarray(band, dtype=np.float64)
         if image.ndim != 2 or image.size == 0:
             raise ValueError("band must be a non-empty 2D array")
@@ -125,6 +133,7 @@ class BandFeatureExtractor:
                             kurtosis, raw_kurtosis)
 
     def _spectral_entropy(self, power: np.ndarray, total: float) -> float:
+        """Return normalized Shannon entropy of a Fourier power array."""
         if total <= self.config.epsilon or power.size <= 1:
             return 0.0
         probabilities = power.ravel() / total
@@ -133,6 +142,7 @@ class BandFeatureExtractor:
         return float(np.clip(entropy / np.log(probabilities.size), 0.0, 1.0))
 
     def _spectral_anisotropy(self, power: np.ndarray, total: float) -> float:
+        """Return directional imbalance derived from spectral second moments."""
         fy = np.fft.fftfreq(power.shape[0])
         fx = np.fft.fftfreq(power.shape[1])
         yy, xx = np.meshgrid(fy, fx, indexing="ij")
@@ -144,6 +154,7 @@ class BandFeatureExtractor:
         return float(np.clip(value, 0.0, 1.0))
 
     def _autocorrelation_strength(self, power: np.ndarray, variance: float) -> float:
+        """Summarize strong off-center normalized autocorrelation responses."""
         correlation = np.fft.fftshift(np.fft.ifft2(power).real / (power.size * variance))
         yy, xx = np.indices(correlation.shape)
         cy, cx = np.array(correlation.shape) // 2
@@ -156,6 +167,7 @@ class BandFeatureExtractor:
         return float(np.clip(strength, 0.0, 1.0))
 
     def _gradient_coherence(self, image: np.ndarray) -> float:
+        """Return the magnitude-weighted agreement of local edge directions."""
         if min(image.shape) < 2:
             return 0.0
         gx = sobel(image, axis=1, mode="reflect")
@@ -175,10 +187,12 @@ class WeightEstimator:
 
     def __init__(self, config: WeightEstimatorConfig | None = None,
                  extractor: BandFeatureExtractor | None = None) -> None:
+        """Create an estimator and optionally reuse a configured extractor."""
         self.config = config or WeightEstimatorConfig()
         self.extractor = extractor or BandFeatureExtractor(self.config)
 
     def estimate(self, features: BandFeatures) -> LossWeights:
+        """Map band descriptors to non-negative weights that sum to one."""
         vector = np.array((1.0, features.spectral_entropy, features.spectral_anisotropy,
                            features.autocorrelation_strength, features.gradient_coherence,
                            features.kurtosis))
@@ -194,5 +208,6 @@ class WeightEstimator:
         return LossWeights(*map(float, normalized))
 
     def analyze(self, band: np.ndarray) -> WeightEstimatorResult:
+        """Extract ``band`` features and return them with estimated weights."""
         features = self.extractor.extract(band)
         return WeightEstimatorResult(features, self.estimate(features))

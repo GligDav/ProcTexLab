@@ -36,7 +36,9 @@ GPU_COMPONENT_TYPES = (
 )
 
 
-def _basis_batch(atoms, u, v, cp):
+def _basis_batch(
+    atoms: list[object], u: object, v: object, cp: object
+) -> object:
     """Evaluate one homogeneous supported family as ``(N, H, W)``."""
     first = atoms[0]
     shape = (len(atoms), 1, 1)
@@ -107,7 +109,10 @@ def _basis_batch(atoms, u, v, cp):
 
 class CuPyCandidateScorer:
     """Keep per-band arrays on CUDA and score homogeneous candidate batches."""
-    def __init__(self, target_loss, u, v, batch_size: int):
+    def __init__(
+        self, target_loss: object, u: np.ndarray, v: np.ndarray, batch_size: int
+    ) -> None:
+        """Initialize CUDA state and upload invariant loss/grid data."""
         self.cp, self.gaussian_filter = load_cupy()
         self.loss = target_loss
         self.u = self.cp.asarray(u)
@@ -115,11 +120,12 @@ class CuPyCandidateScorer:
         self.reference = self.cp.asarray(target_loss.reference)
         self.batch_size = batch_size
 
-    def supported(self, atom) -> bool:
+    def supported(self, atom: object) -> bool:
+        """Return whether ``atom`` and the active loss can be scored on CUDA."""
         # The local-structure filter bank has no GPU implementation yet.
         return isinstance(atom, GPU_COMPONENT_TYPES) and not self.loss.weights.local_structure
 
-    def _feature_loss(self, images):
+    def _feature_loss(self, images: object) -> object:
         """Mirror enabled TextureLoss terms on a resident candidate batch."""
         cp, weights = self.cp, self.loss.weights
         count = images.shape[0]
@@ -235,14 +241,18 @@ class CuPyCandidateScorer:
         return totals/denominator
 
     def can_score_complete_loss(self) -> bool:
+        """Return whether every enabled loss term has a CUDA implementation."""
         return not self.loss.weights.local_structure
 
-    def prepare_iteration(self, current, residual) -> None:
+    def prepare_iteration(self, current: np.ndarray, residual: np.ndarray) -> None:
         """Transfer the two changing band arrays once for all family batches."""
         self.current = self.cp.asarray(current)
         self.residual = self.cp.asarray(residual)
 
-    def project_and_score(self, atoms: Iterable, current, residual, before):
+    def project_and_score(
+        self, atoms: Iterable[object], current: np.ndarray, residual: np.ndarray,
+        before: float,
+    ) -> list[tuple[float, float, object]]:
         """Return ``(improvement, projection_score, atom)`` in input order."""
         atoms = list(atoms); results = []
         current_gpu = self.current if hasattr(self, "current") else self.cp.asarray(current)
@@ -272,7 +282,9 @@ class CuPyCandidateScorer:
         return results
 
 
-def group_supported_candidates(candidates):
+def group_supported_candidates(
+    candidates: Iterable[object],
+) -> dict[type, list[tuple[int, object]]]:
     """Group without changing the original candidate order."""
     groups = defaultdict(list)
     for index, atom in enumerate(candidates):

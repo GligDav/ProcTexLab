@@ -15,6 +15,7 @@ class ImageDecomposition(ABC):
         """Return bands which add up to ``image``."""
 
     def reconstruct(self, bands: tuple[np.ndarray, ...] | list[np.ndarray]) -> np.ndarray:
+        """Add equally shaped bands and return the reconstructed float image."""
         if not bands:
             raise ValueError("at least one band is required")
         shape = np.asarray(bands[0]).shape
@@ -36,6 +37,7 @@ class LaplacianPyramid(ImageDecomposition):
     base_sigma: float = 1.0
 
     def __post_init__(self) -> None:
+        """Validate the requested band count and first Gaussian scale."""
         if isinstance(self.bands, bool) or not isinstance(self.bands, int) or self.bands < 1:
             raise ValueError("bands must be a positive integer")
         if not np.isfinite(self.base_sigma) or self.base_sigma <= 0:
@@ -43,14 +45,18 @@ class LaplacianPyramid(ImageDecomposition):
 
     @property
     def sigmas(self) -> tuple[float, ...]:
+        """Return the octave-spaced Gaussian scales between pyramid bands."""
         return tuple(self.base_sigma * (2.0 ** index) for index in range(self.bands - 1))
 
     def decompose(self, image: np.ndarray) -> tuple[np.ndarray, ...]:
+        """Split a finite 2D image into additive, full-resolution bands."""
         source = np.asarray(image, dtype=np.float64)
         if source.ndim != 2 or source.size == 0 or not np.all(np.isfinite(source)):
             raise ValueError("decomposition expects a finite, non-empty 2D image")
         if self.bands == 1:
             return (source.copy(),)
+        # Adjacent Gaussian levels differ into Laplacian bands; telescoping the
+        # differences with the final residual reconstructs the source exactly.
         blurred = tuple(gaussian_filter(source, sigma, mode="reflect") for sigma in self.sigmas)
         return (source - blurred[0],) + tuple(
             blurred[index] - blurred[index + 1] for index in range(len(blurred) - 1)

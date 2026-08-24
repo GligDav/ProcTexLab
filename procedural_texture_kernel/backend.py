@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter as numpy_gaussian_filter
 from scipy.ndimage import zoom as numpy_zoom
 
 
-def load_cupy():
+def load_cupy() -> tuple[object, object]:
     """Import CuPy lazily and verify that a CUDA device is usable."""
     try:
         import cupy as cp
@@ -28,7 +28,7 @@ def load_cupy():
     return cp, gaussian_filter
 
 
-def array_module(*values):
+def array_module(*values: object) -> object:
     """Return CuPy for CUDA arrays and NumPy otherwise, without eager imports."""
     if any(hasattr(value, "__cuda_array_interface__") for value in values):
         import cupy as cp
@@ -38,6 +38,7 @@ def array_module(*values):
 
 @dataclass(frozen=True)
 class NumericBackend:
+    """NumPy-compatible module and image operators selected for a fit."""
     name: str
     xp: object
     gaussian_filter: object
@@ -45,9 +46,11 @@ class NumericBackend:
 
     @property
     def accelerated(self) -> bool:
+        """Return whether array operations execute on a CUDA device."""
         return self.name == "cupy"
 
-    def to_numpy(self, value):
+    def to_numpy(self, value: object) -> np.ndarray:
+        """Copy a backend array-like value to a host NumPy array."""
         return self.xp.asnumpy(value) if self.accelerated else np.asarray(value)
 
 

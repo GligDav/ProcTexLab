@@ -63,11 +63,17 @@ def _families_for_band(config: "FitConfig", band_index: int,
     active = tuple(family for family in selected if family in preferred)
     return active or selected
 
-def _notify(callback, stage: str, progress: float, message: str) -> None:
+def _notify(
+    callback: "ProgressCallback | None", stage: str, progress: float, message: str
+) -> None:
+    """Send a clamped progress update when a callback was supplied."""
     if callback is not None:
         callback(stage, float(np.clip(progress, 0, 1)), message)
 
-def _resize_for_fit(image: np.ndarray, limit: int | None, backend=None) -> np.ndarray:
+def _resize_for_fit(
+    image: np.ndarray, limit: int | None, backend: object | None = None
+) -> np.ndarray:
+    """Downsample an image to the fitting limit after anti-alias filtering."""
     if limit is None or max(image.shape) <= limit:
         return image
     factor = limit / max(image.shape)
@@ -82,7 +88,8 @@ def _resize_for_fit(image: np.ndarray, limit: int | None, backend=None) -> np.nd
         order=1, prefilter=False)
     return backend.to_numpy(resized)
 
-def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge: float,
+def _solve_linear(model: ProceduralTextureModel, target: np.ndarray,
+                  u: np.ndarray, v: np.ndarray, ridge: float,
                   include_plane: bool | None = None) -> None:
     """Initialize global DC/plane coefficients with stable least squares."""
     if include_plane is None:
@@ -104,7 +111,10 @@ def _solve_linear(model: ProceduralTextureModel, target: np.ndarray, u, v, ridge
     for component, amplitude in zip(model.components, coefficients[index:]):
         component.amplitude = float(amplitude)
 
-def _initial_plane(target, u, v, enabled: bool, ridge: float) -> ProceduralTextureModel:
+def _initial_plane(
+    target: np.ndarray, u: np.ndarray, v: np.ndarray, enabled: bool, ridge: float
+) -> ProceduralTextureModel:
+    """Fit the initial bias and optional linear UV trend."""
     model = ProceduralTextureModel(trend_u=1.0 if enabled else 0.0,
                                    trend_v=1.0 if enabled else 0.0)
     _solve_linear(model, target, u, v, ridge, include_plane=enabled)
@@ -112,7 +122,7 @@ def _initial_plane(target, u, v, enabled: bool, ridge: float) -> ProceduralTextu
 
 
 def _refit_linear_amplitudes(model: ProceduralTextureModel, target: np.ndarray,
-                             loss: TextureLoss, u, v, ridge: float,
+                             loss: TextureLoss, u: np.ndarray, v: np.ndarray, ridge: float,
                              include_plane: bool) -> dict:
     """Jointly refit all linear coefficients and retain only objective improvements."""
     before, _ = loss.evaluate(model.evaluate_grid(u, v))
@@ -132,8 +142,10 @@ def _refit_linear_amplitudes(model: ProceduralTextureModel, target: np.ndarray,
 
 
 def _refine_model_parameters(model: ProceduralTextureModel, target: np.ndarray,
-                             loss: TextureLoss, u, v, config: "FitConfig",
-                             progress_callback=None, cancel_callback=None) -> dict:
+                             loss: TextureLoss, u: np.ndarray, v: np.ndarray,
+                             config: "FitConfig",
+                             progress_callback: "ProgressCallback | None" = None,
+                             cancel_callback: "CancelCallback | None" = None) -> dict:
     """Revisit accepted atoms with coordinate-descent nonlinear refinement."""
     initial, _ = loss.evaluate(model.evaluate_grid(u, v))
     passes = []
@@ -150,7 +162,8 @@ def _refine_model_parameters(model: ProceduralTextureModel, target: np.ndarray,
             current_without_atom = full - atom.evaluate(u, v)
             refined = _refine_new_atom(
                 atom, current_without_atom, loss, u, v,
-                max(8, config.max_iterations // 2), config.max_frequency)
+                max(8, config.max_iterations // 2), config.max_frequency,
+                cancel_callback)
             before, _ = loss.evaluate(full)
             after, _ = loss.evaluate(
                 current_without_atom + refined.evaluate(u, v))
@@ -177,7 +190,9 @@ def _refine_model_parameters(model: ProceduralTextureModel, target: np.ndarray,
             "after": final, "improvement": initial - final,
             "accepted_atoms": sum(item["accepted_atoms"] for item in passes)}
 
-def _fft_sinusoid_candidates(residual, config, count: int):
+def _fft_sinusoid_candidates(
+    residual: np.ndarray, config: "FitConfig", count: int
+) -> list[SinusoidComponent]:
     """Use a Hann window to suppress non-periodic boundary leakage."""
     h, w = residual.shape
     window = np.outer(np.hanning(h), np.hanning(w))
@@ -202,7 +217,9 @@ def _fft_sinusoid_candidates(residual, config, count: int):
     return candidates
 
 
-def _spectral_noise_candidate(residual, config):
+def _spectral_noise_candidate(
+    residual: np.ndarray, config: "FitConfig"
+) -> SpectralNoiseComponent | None:
     """Bundle the strongest unique residual modes into one procedural atom."""
     h, w = residual.shape
     # Unlike peak-only proposals, this atom reconstructs the selected integer
@@ -238,13 +255,19 @@ def _spectral_noise_candidate(residual, config):
         weights=tuple(map(float, raw_weights)),
         phases=tuple(float(np.angle(spectrum[index])) for index in indices))
 
-def _project(atom, residual, u, v):
+def _project(
+    atom: Any, residual: np.ndarray, u: np.ndarray, v: np.ndarray
+) -> tuple[float, float]:
+    """Least-squares project an atom onto a residual and report its energy."""
     basis = atom.basis(u, v)
     denominator = float(np.vdot(basis, basis).real)
     amplitude = 0.0 if denominator < 1e-14 else float(np.vdot(residual, basis).real / denominator)
     return amplitude, float(amplitude * amplitude * denominator / residual.size)
 
-def _phase_sinusoid(atom, residual, u, v):
+def _phase_sinusoid(
+    atom: SinusoidComponent, residual: np.ndarray, u: np.ndarray, v: np.ndarray
+) -> SinusoidComponent:
+    """Fit a sinusoid's amplitude and phase by two-column least squares."""
     angle = 2 * np.pi * (atom.frequency_u * u + atom.frequency_v * v)
     design = np.column_stack([np.cos(angle).ravel(), np.sin(angle).ravel()])
     a, b = np.linalg.lstsq(design, residual.ravel(), rcond=None)[0]
@@ -252,7 +275,10 @@ def _phase_sinusoid(atom, residual, u, v):
     return atom
 
 
-def _local_structure_estimate(residual, iy: int, ix: int, gradients=None):
+def _local_structure_estimate(
+    residual: np.ndarray, iy: int, ix: int,
+    gradients: tuple[np.ndarray, np.ndarray] | None = None,
+) -> tuple[float, float, float]:
     """Estimate local edge normal, tangent, and support size around a residual peak."""
     if gradients is None:
         gradients = np.gradient(gaussian_filter(residual, 1.0))
@@ -276,7 +302,9 @@ def _local_structure_estimate(residual, iy: int, ix: int, gradients=None):
     return normal, tangent, scale
 
 
-def _adaptive_noise_frequencies(residual, config):
+def _adaptive_noise_frequencies(
+    residual: np.ndarray, config: "FitConfig"
+) -> tuple[float, ...]:
     """Combine residual spectral peaks with stable octave anchors."""
     probes = _fft_sinusoid_candidates(residual, config, 2)
     proposed = [float(np.hypot(atom.frequency_u, atom.frequency_v)) for atom in probes]
@@ -293,7 +321,10 @@ def _adaptive_noise_frequencies(residual, config):
             break
     return tuple(frequencies)
 
-def _local_candidates(residual, config, dominant_frequency: float):
+def _local_candidates(
+    residual: np.ndarray, config: "FitConfig", dominant_frequency: float
+) -> list[object]:
+    """Propose localized atoms around separated strong residual peaks."""
     h, w = residual.shape; u, v = coordinate_grid(w, h)
     gradients = np.gradient(gaussian_filter(residual, 1.0))
     flat_order = np.argsort(np.abs(residual).ravel())[::-1]
@@ -352,7 +383,10 @@ def _local_candidates(residual, config, dominant_frequency: float):
         out.append(SparseImpulseComponent(seed=config.seed))
     return out
 
-def _perlin_candidates(residual, config, u, v):
+def _perlin_candidates(
+    residual: np.ndarray, config: "FitConfig", u: np.ndarray, v: np.ndarray
+) -> list[object]:
+    """Build seeded noise-family candidates adapted to residual frequencies."""
     frequencies = _adaptive_noise_frequencies(residual, config)
     maximum = (config.max_frequency if config.max_frequency is not None
                else .45 * min(residual.shape))
@@ -462,7 +496,9 @@ def _perlin_candidates(residual, config, u, v):
     return candidates
 
 
-def _perlin_basis_for_threshold(atom: ThresholdedNoiseComponent, u, v):
+def _perlin_basis_for_threshold(
+    atom: ThresholdedNoiseComponent, u: np.ndarray, v: np.ndarray
+) -> np.ndarray:
     """Evaluate the unremapped source field used to initialize thresholds."""
     du, dv = u - .5, v - .5
     c, s = np.cos(atom.rotation), np.sin(atom.rotation)
@@ -474,8 +510,12 @@ def _perlin_basis_for_threshold(atom: ThresholdedNoiseComponent, u, v):
         offset_u=atom.offset_u, offset_v=atom.offset_v,
         seed=atom.seed).basis(ru, rv)
 
-def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
-                     max_frequency: float = 32.0):
+def _refine_new_atom(
+    atom: object, current: np.ndarray, target_loss: TextureLoss,
+    u: np.ndarray, v: np.ndarray, max_iterations: int,
+    max_frequency: float = 32.0,
+    cancel_callback: "CancelCallback | None" = None,
+) -> object:
     """Refine one atom against the translation-tolerant composite texture loss."""
     frequency_upper = max(float(max_frequency), .25)
     if isinstance(atom, SinusoidComponent):
@@ -483,23 +523,31 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
         bound = max(1.0, np.hypot(atom.frequency_u, atom.frequency_v) * .35)
         bounds = [(-2, 2), (atom.frequency_u-bound, atom.frequency_u+bound),
                   (atom.frequency_v-bound, atom.frequency_v+bound), (-np.pi, np.pi)]
-        def make(p): return SinusoidComponent(p[0], p[1], p[2], p[3])
+        def make(p: np.ndarray) -> SinusoidComponent:
+            """Build a sinusoid from optimizer parameters."""
+            return SinusoidComponent(p[0], p[1], p[2], p[3])
     elif isinstance(atom, GaussianRBFComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma]
         bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5)]
-        def make(p): return GaussianRBFComponent(p[0], p[1], p[2], p[3])
+        def make(p: np.ndarray) -> GaussianRBFComponent:
+            """Build a Gaussian RBF from optimizer parameters."""
+            return GaussianRBFComponent(p[0], p[1], p[2], p[3])
     elif isinstance(atom, WaveletComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.scale_u,
               atom.scale_v, atom.orientation]
         bounds = [(-2, 2), (0, 1), (0, 1), (.015, .5), (.015, .5),
                   (-np.pi, np.pi)]
-        def make(p): return WaveletComponent(p[0], p[1], p[2], p[3], p[4], p[5])
+        def make(p: np.ndarray) -> WaveletComponent:
+            """Build a wavelet from optimizer parameters."""
+            return WaveletComponent(p[0], p[1], p[2], p[3], p[4], p[5])
     elif isinstance(atom, ThresholdedNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v,
               atom.rotation, atom.threshold, atom.edge_width]
         bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (-np.pi, np.pi), (-1, 1), (.005, .5)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> ThresholdedNoiseComponent:
+            """Build thresholded noise from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
             offset_v=p[3], rotation=p[4], threshold=p[5], edge_width=p[6])
     elif isinstance(atom, MaskedNoiseComponent):
@@ -510,7 +558,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
         bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (-np.pi, np.pi),
                   (-1, 1), (.005, .5), (.25, frequency_upper), (-1, 1), (-1, 1)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> MaskedNoiseComponent:
+            """Build masked noise from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], mask_frequency=p[1], mask_offset_u=p[2],
             mask_offset_v=p[3], mask_rotation=p[4], mask_threshold=p[5],
             mask_edge_width=p[6], detail_frequency=p[7],
@@ -526,7 +576,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
                   (.25, 8), (-np.pi, np.pi), (.25, 4), (0, .75),
                   (.25, min(16.0, frequency_upper)), (-1, 1), (.005, .5),
                   (.25, frequency_upper), (-1, 1), (-1, 1)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> WarpedRidgeDetailComponent:
+            """Build warped-ridge detail from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], ridge_frequency=p[1],
             ridge_offset_u=p[2], ridge_offset_v=p[3], ridge_power=p[4],
             ridge_rotation=p[5], ridge_anisotropy=p[6],
@@ -542,7 +594,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
             bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                       (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4),
                       (0, .75), (.25, min(16.0, frequency_upper))]
-            def make(p): return replace(
+            def make(p: np.ndarray) -> WarpedRidgedMultifractalComponent:
+                """Build warped ridged noise from optimizer parameters."""
+                return replace(
                 atom, amplitude=p[0], frequency=p[1], offset_u=p[2],
                 offset_v=p[3], ridge_offset=p[4], ridge_power=p[5],
                 rotation=p[6], anisotropy=p[7], warp_amplitude=p[8],
@@ -552,7 +606,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
                   atom.ridge_offset, atom.ridge_power, atom.rotation, atom.anisotropy]
             bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                       (.25, 1.5), (.25, 8), (-np.pi, np.pi), (.25, 4)]
-            def make(p): return replace(
+            def make(p: np.ndarray) -> RidgedMultifractalComponent:
+                """Build ridged noise from optimizer parameters."""
+                return replace(
                 atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
                 ridge_offset=p[4], ridge_power=p[5], rotation=p[6], anisotropy=p[7])
     elif isinstance(atom, DomainWarpedNoiseComponent):
@@ -560,7 +616,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
               atom.warp_amplitude, atom.warp_frequency]
         bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (0, .75), (.25, min(16.0, frequency_upper))]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> DomainWarpedNoiseComponent:
+            """Build domain-warped noise from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
             warp_amplitude=p[4], warp_frequency=p[5])
     elif isinstance(atom, (FractalBrownianMotionComponent, TurbulenceNoiseComponent)):
@@ -568,24 +626,32 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
               atom.persistence, atom.lacunarity]
         bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1),
                   (.1, .9), (1.25, 4)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> object:
+            """Rebuild the current fractal-noise subtype from parameters."""
+            return replace(
             atom, amplitude=p[0], frequency=p[1], offset_u=p[2], offset_v=p[3],
             persistence=p[4], lacunarity=p[5])
     elif isinstance(atom, PerlinNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, frequency_upper), (-1, 1), (-1, 1)]
-        def make(p): return replace(atom, amplitude=p[0], frequency=p[1],
-                                    offset_u=p[2], offset_v=p[3])
+        def make(p: np.ndarray) -> PerlinNoiseComponent:
+            """Build Perlin noise from optimizer parameters."""
+            return replace(atom, amplitude=p[0], frequency=p[1],
+                           offset_u=p[2], offset_v=p[3])
     elif isinstance(atom, GaborComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma_u, atom.sigma_v,
               atom.frequency, atom.orientation, atom.phase]
         bounds = [(-2, 2), (0, 1), (0, 1), (.02, .5), (.02, .5),
                   (.25, frequency_upper), (-np.pi, np.pi), (-np.pi, np.pi)]
-        def make(p): return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
+        def make(p: np.ndarray) -> GaborComponent:
+            """Build a Gabor atom from optimizer parameters."""
+            return GaborComponent(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7])
     elif isinstance(atom, VoronoiNoiseComponent):
         x0 = [atom.amplitude, atom.frequency, atom.jitter, atom.offset_u, atom.offset_v]
         bounds = [(-2, 2), (.25, frequency_upper), (0, 1.5), (-1, 1), (-1, 1)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> VoronoiNoiseComponent:
+            """Build Voronoi noise from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], frequency=p[1], jitter=p[2],
             offset_u=p[3], offset_v=p[4])
     elif isinstance(atom, AnisotropicGaussianComponent):
@@ -593,7 +659,9 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
               atom.sigma_v, atom.orientation]
         bounds = [(-2, 2), (0, 1), (0, 1), (.01, .75), (.01, .75),
                   (-np.pi, np.pi)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> AnisotropicGaussianComponent:
+            """Build an anisotropic Gaussian from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], center_u=p[1], center_v=p[2],
             sigma_u=p[3], sigma_v=p[4], orientation=p[5])
     elif isinstance(atom, LineComponent):
@@ -601,20 +669,26 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
               atom.length, atom.orientation, atom.softness]
         bounds = [(-2, 2), (0, 1), (0, 1), (.005, .5), (.02, 2),
                   (-np.pi, np.pi), (.002, .25)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> LineComponent:
+            """Build a line atom from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], center_u=p[1], center_v=p[2], width=p[3],
             length=p[4], orientation=p[5], softness=p[6])
     elif isinstance(atom, StepEdgeComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v,
               atom.orientation, atom.softness]
         bounds = [(-2, 2), (0, 1), (0, 1), (-np.pi, np.pi), (.001, .25)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> StepEdgeComponent:
+            """Build a step edge from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], center_u=p[1], center_v=p[2],
             orientation=p[3], softness=p[4])
     elif isinstance(atom, DifferenceOfGaussiansComponent):
         x0 = [atom.amplitude, atom.center_u, atom.center_v, atom.sigma, atom.ratio]
         bounds = [(-2, 2), (0, 1), (0, 1), (.01, .5), (1.01, 4)]
-        def make(p): return replace(
+        def make(p: np.ndarray) -> DifferenceOfGaussiansComponent:
+            """Build a DoG/LoG atom from optimizer parameters."""
+            return replace(
             atom, amplitude=p[0], center_u=p[1], center_v=p[2],
             sigma=p[3], ratio=p[4])
     elif isinstance(atom, ShaderGraphComponent):
@@ -638,7 +712,8 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
                   (-1, 1), (.005, .5),
                   (.25, frequency_upper), (-1, 1), (-1, 1),
                   (.25, frequency_upper), (-1, 1), (-1, 1)]
-        def make(p):
+        def make(p: np.ndarray) -> ShaderGraphComponent:
+            """Rebuild the parameterized shader graph from optimizer values."""
             mask = replace(mask_source, frequency=p[1], offset_u=p[2], offset_v=p[3])
             first = replace(detail_a, frequency=p[6], offset_u=p[7], offset_v=p[8])
             second = replace(detail_b, frequency=p[9], offset_u=p[10], offset_v=p[11])
@@ -655,7 +730,11 @@ def _refine_new_atom(atom, current, target_loss, u, v, max_iterations: int,
         # These families have discrete modes or heterogeneous parameterizations;
         # projection already gives their exact least-squares amplitude.
         return atom
-    def objective(p): return target_loss.evaluate_total(current + make(p).evaluate(u, v))
+    def objective(p: np.ndarray) -> float:
+        """Evaluate one optimizer parameter vector against the texture loss."""
+        if cancel_callback is not None and cancel_callback():
+            raise RuntimeError("fitting cancelled")
+        return target_loss.evaluate_total(current + make(p).evaluate(u, v))
     initial_loss = objective(x0)
     result = minimize(objective, x0, method="Nelder-Mead", bounds=bounds,
                       options={"maxiter": max_iterations, "xatol": 1e-5, "fatol": 1e-7})
@@ -685,8 +764,10 @@ def _diverse_candidate_shortlist(initialized: list[tuple[float, object]],
     return selected
 
 def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
-              band_count: int, progress_callback=None,
-              cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
+              band_count: int,
+              progress_callback: "ProgressCallback | None" = None,
+              cancel_callback: "CancelCallback | None" = None,
+              ) -> tuple[ProceduralTextureModel, dict]:
     """Fit one target band without decomposing procedural candidates."""
     h, w = target.shape; u, v = coordinate_grid(w, h)
     active_families = _families_for_band(config, band_index, band_count)
@@ -751,7 +832,10 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
                                           frequency_probes[0].frequency_v))
         candidates.extend(_local_candidates(residual, candidate_config, dominant))
         if not candidates: break
-        def initialize(atom):
+        def initialize(atom: object) -> tuple[float, object]:
+            """Project one candidate and pair it with its initialization score."""
+            if cancel_callback is not None and cancel_callback():
+                raise RuntimeError("fitting cancelled")
             if isinstance(atom, SinusoidComponent):
                 score = float(np.mean((atom.amplitude * atom.basis(u, v))**2))
             else:
@@ -771,7 +855,12 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         if weights.local_structure > 0:
             initialized = _diverse_candidate_shortlist(
                 initialized, config.local_structure_candidate_limit)
-        def score_candidate(item):
+        def score_candidate(
+            item: tuple[float, object],
+        ) -> tuple[float, float, object]:
+            """Measure a projected candidate's improvement in the full objective."""
+            if cancel_callback is not None and cancel_callback():
+                raise RuntimeError("fitting cancelled")
             score, atom = item
             # Pixel correlation initializes and, for the expensive local
             # structure objective, shortlists atoms. Final selection still uses
@@ -794,7 +883,8 @@ def _fit_band(target: np.ndarray, config: "FitConfig", band_index: int,
         improvement, _, chosen = max(scored, key=lambda item: (item[0], item[1]))
         if improvement <= config.min_improvement: break
         chosen = _refine_new_atom(chosen, current, loss, u, v,
-                                  config.max_iterations, config.max_frequency)
+                                  config.max_iterations, config.max_frequency,
+                                  cancel_callback)
         after, parts = loss.evaluate(current + chosen.evaluate(u, v))
         if before - after <= config.min_improvement:
             break
@@ -866,13 +956,16 @@ def _combine_models(models: list[ProceduralTextureModel]) -> ProceduralTextureMo
 
 
 def _high_frequency_energy(diagnostics: dict, side: str) -> float:
+    """Sum the named side's high and very-high diagnostic band energy."""
     return float(sum(band[f"{side}_energy"] for band in diagnostics["bands"]
                      if band["name"] in ("high", "very_high")))
 
 
 def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
-                           config: "FitConfig", progress_callback=None,
-                           cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
+                           config: "FitConfig",
+                           progress_callback: "ProgressCallback | None" = None,
+                           cancel_callback: "CancelCallback | None" = None,
+                           ) -> tuple[ProceduralTextureModel, dict]:
     """Fit the high-pass reconstruction residual when diagnostics show a deficit."""
     h, w = target.shape
     before_image = model.evaluate(w, h)
@@ -951,10 +1044,25 @@ def _refine_high_frequency(target: np.ndarray, model: ProceduralTextureModel,
     return candidate_model, metadata
 
 
-def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
-                cancel_callback=None) -> tuple[ProceduralTextureModel, dict]:
-    """Decompose the target, fit every band independently, then add the models."""
+def fit_texture(
+    target: np.ndarray, config: "FitConfig",
+    progress_callback: "ProgressCallback | None" = None,
+    cancel_callback: "CancelCallback | None" = None,
+) -> tuple[ProceduralTextureModel, dict]:
+    """Decompose a target, fit every band, and combine the procedural models.
+
+    Args:
+        target: Normalized finite 2D image to approximate.
+        config: Validated fitting and objective controls.
+        progress_callback: Optional stage/fraction/message reporter.
+        cancel_callback: Optional predicate used to abort fitting cooperatively.
+
+    Returns:
+        The combined procedural model and detailed per-band fitting metadata.
+    """
     started = time.perf_counter()
+    if cancel_callback is not None and cancel_callback():
+        raise RuntimeError("fitting cancelled")
     backend = numeric_backend(config.compute_backend)
     fit_target = _resize_for_fit(target, config.fitting_resolution, backend)
     h, w = fit_target.shape
@@ -987,8 +1095,10 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
     band_progress = [0.0] * band_count
     progress_lock = Lock()
 
-    def band_callback(band_index: int):
+    def band_callback(band_index: int) -> "ProgressCallback":
+        """Create a thread-safe reporter for one decomposition band."""
         def report(stage: str, value: float, message: str) -> None:
+            """Merge one band's progress into the overall progress fraction."""
             # Serialize callbacks and report the mean completion of all bands.
             # max() prevents a later fitting stage from moving progress backward.
             with progress_lock:
@@ -998,7 +1108,12 @@ def fit_texture(target: np.ndarray, config: "FitConfig", progress_callback=None,
                         sum(band_progress) / max(band_count, 1), message)
         return report
 
-    def process_band(item):
+    def process_band(
+        item: tuple[int, np.ndarray],
+    ) -> tuple[ProceduralTextureModel, dict]:
+        """Fit one indexed decomposition band for serial or worker execution."""
+        if cancel_callback is not None and cancel_callback():
+            raise RuntimeError("fitting cancelled")
         band_index, band_target = item
         callback = band_callback(band_index)
         callback("initialization", 0.0,

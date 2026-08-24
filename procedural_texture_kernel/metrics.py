@@ -1,8 +1,18 @@
 """Numerical reconstruction metrics."""
 import numpy as np
 
-def calculate_metrics(target, reconstruction) -> dict[str, float]:
-    """Return MSE, RMSE, MAE, PSNR, normalized RMSE and correlation."""
+def calculate_metrics(
+    target: np.ndarray, reconstruction: np.ndarray
+) -> dict[str, float]:
+    """Compare two same-shaped images with scalar error metrics.
+
+    Args:
+        target: Non-empty reference image.
+        reconstruction: Reconstructed image with the same shape as ``target``.
+
+    Returns:
+        MSE, RMSE, MAE, PSNR, normalized RMSE, and correlation by name.
+    """
     a, b = np.asarray(target, float), np.asarray(reconstruction, float)
     if a.shape != b.shape or a.size == 0:
         raise ValueError("metric inputs must be non-empty and have matching shapes")

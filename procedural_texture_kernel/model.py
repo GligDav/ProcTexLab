@@ -18,12 +18,16 @@ class ProceduralTextureModel:
     trend_v: float = 0.0
     components: list[ProceduralComponent] = field(default_factory=list)
     def add(self, component: ProceduralComponent) -> None:
+        """Append a procedural atom to the model's additive component list."""
         self.components.append(component)
     def evaluate_grid(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the trend and all atoms on matching explicit UV grids."""
         if u.shape != v.shape:
             raise ValueError("u and v grids must have the same shape")
+        # Establish the global low-frequency surface before accumulating atoms.
         out = self.bias + self.trend_u * (u - 0.5) + self.trend_v * (v - 0.5)
         xp = array_module(u, v)
+        # Materialize a writable grid because broadcast views cannot be updated in place.
         out = xp.broadcast_to(out, u.shape).astype(xp.float64, copy=True)
         for component in self.components:
             out += component.evaluate(u, v)
@@ -39,11 +43,13 @@ class ProceduralTextureModel:
         """Evaluate an arbitrary UV rectangle for continuation/tiling inspection."""
         return self.evaluate_grid(*coordinate_grid_region(width, height, u_bounds, v_bounds))
     def to_dict(self) -> dict:
+        """Return the versioned, JSON-serializable model representation."""
         return {"schema_version": SCHEMA_VERSION, "coordinate_system": COORDINATE_SYSTEM,
                 "bias": self.bias, "trend_u": self.trend_u, "trend_v": self.trend_v,
                 "components": [c.to_dict() for c in self.components]}
     @classmethod
     def from_dict(cls, data: dict) -> "ProceduralTextureModel":
+        """Validate and deserialize a model mapping produced by :meth:`to_dict`."""
         if data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"unsupported schema version: {data.get('schema_version')!r}")
         if data.get("coordinate_system") != COORDINATE_SYSTEM:
@@ -52,7 +58,9 @@ class ProceduralTextureModel:
                    float(data.get("trend_v", 0)),
                    [component_from_dict(x) for x in data.get("components", [])])
     def save_json(self, path: str | Path) -> None:
+        """Serialize the model as indented JSON at ``path``."""
         Path(path).write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
     @classmethod
     def load_json(cls, path: str | Path) -> "ProceduralTextureModel":
+        """Load and validate a model from a UTF-8 JSON file."""
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))

@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 import pytest
 
@@ -147,6 +149,27 @@ def test_parallel_candidate_scoring_preserves_fit_result():
     assert np.allclose(parallel.reconstruction, sequential.reconstruction)
     assert parallel.model.to_dict() == sequential.model.to_dict()
     assert parallel.metadata["bands"][0]["candidate_workers"] == 3
+
+
+def test_parallel_fit_cancellation_stops_kernel_worker_threads():
+    cancelled = threading.Event()
+    image = np.random.default_rng(8).random((32, 36))
+    config = FitConfig(
+        decomposition_bands=3, band_workers=2, candidate_workers=2,
+        max_components=4, max_iterations=20, fitting_resolution=None,
+        component_families=("sinusoid", "gabor", "wavelet"),
+    )
+
+    def progress(_stage, _value, _message):
+        cancelled.set()
+
+    with pytest.raises(RuntimeError, match="fitting cancelled"):
+        TextureFitter(config).fit(
+            image, progress_callback=progress,
+            cancel_callback=cancelled.is_set)
+
+    assert not any(thread.name.startswith(("texture-band", "texture-candidate"))
+                   for thread in threading.enumerate())
 
 
 def test_high_frequency_refinement_adds_detail_when_base_fit_has_no_atoms():

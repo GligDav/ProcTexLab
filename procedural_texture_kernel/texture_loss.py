@@ -18,7 +18,8 @@ class TextureLossWeights:
     absolute_spectrum: float = 0.0
     oriented_spectrum: float = 0.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
+        """Reject negative, non-finite, or collectively zero loss weights."""
         values = (self.spectrum, self.histogram, self.autocorrelation, self.gradient,
                   self.mse, self.local_structure, self.local_contrast,
                   self.absolute_spectrum, self.oriented_spectrum)
@@ -28,6 +29,7 @@ class TextureLossWeights:
             raise ValueError("at least one texture loss weight must be positive")
 
 def _spectrum_features(image: np.ndarray) -> list[np.ndarray]:
+    """Return log-power Fourier descriptors across a small image pyramid."""
     features = []
     current = np.asarray(image, dtype=np.float64)
     for _ in range(3):
@@ -84,11 +86,13 @@ def _oriented_spectrum_energy(image: np.ndarray, orientations: int = 8) -> np.nd
 
 def _histogram_feature(image: np.ndarray, value_range: tuple[float, float],
                        bins: int = 64) -> np.ndarray:
+    """Return a normalized cumulative histogram over ``value_range``."""
     histogram, _ = np.histogram(np.clip(image, *value_range), bins=bins,
                                 range=value_range, density=False)
     return np.cumsum(histogram, dtype=np.float64) / image.size
 
 def _autocorrelation_feature(image: np.ndarray) -> np.ndarray:
+    """Return the central normalized cyclic autocorrelation neighborhood."""
     centered = image - np.mean(image)
     variance = float(np.mean(centered * centered))
     radius_y = min(8, image.shape[0] // 2)
@@ -100,7 +104,9 @@ def _autocorrelation_feature(image: np.ndarray) -> np.ndarray:
     cy, cx = image.shape[0] // 2, image.shape[1] // 2
     return correlation[cy-radius_y:cy+radius_y+1, cx-radius_x:cx+radius_x+1]
 
-def _gradient_feature(image: np.ndarray, normalizers=None):
+def _gradient_feature(
+    image: np.ndarray, normalizers: tuple[float, ...] | None = None
+) -> tuple[np.ndarray, tuple[float, ...]]:
     """Return multiscale edge statistics using shared reference normalization."""
     features, used_normalizers = [], []
     for index, sigma in enumerate((0.0, 1.0, 2.0, 4.0)):
@@ -125,7 +131,9 @@ def _gradient_feature(image: np.ndarray, normalizers=None):
     return np.asarray(features), tuple(used_normalizers)
 
 
-def _local_contrast_feature(image: np.ndarray, normalizers=None):
+def _local_contrast_feature(
+    image: np.ndarray, normalizers: tuple[float, ...] | None = None
+) -> tuple[np.ndarray, tuple[float, ...]]:
     """Describe local standard-deviation distributions at several scales."""
     features, used_normalizers = [], []
     squared = np.asarray(image, dtype=np.float64) ** 2
@@ -164,6 +172,7 @@ def _oriented_filter_bank(shape: tuple[int, int], scales: int,
 
 
 def _correlation(a: np.ndarray, b: np.ndarray) -> float:
+    """Return normalized correlation between flattened centered arrays."""
     first = a.ravel() - np.mean(a)
     second = b.ravel() - np.mean(b)
     denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
@@ -222,7 +231,8 @@ class TextureLoss:
     """Caches reference features and evaluates a weighted texture loss."""
     def __init__(self, reference: np.ndarray, weights: TextureLossWeights | None = None,
                  local_structure_scales: int = 3, local_structure_orientations: int = 4,
-                 local_structure_block_size: int = 8):
+                 local_structure_block_size: int = 8) -> None:
+        """Precompute reference features for repeated candidate evaluation."""
         self.reference = np.asarray(reference, dtype=np.float64)
         if (self.reference.ndim != 2 or self.reference.size == 0
                 or not np.all(np.isfinite(self.reference))):
@@ -259,9 +269,11 @@ class TextureLoss:
             if self.weights.local_structure > 0 else None)
 
     def components(self, candidate: np.ndarray) -> dict[str, float]:
+        """Return every unweighted diagnostic loss for a matching candidate."""
         image = np.asarray(candidate, dtype=np.float64)
         if image.shape != self.reference.shape or not np.all(np.isfinite(image)):
             raise ValueError("candidate must be finite and match the reference shape")
+        # Compute all diagnostics here for reporting, irrespective of zero weights.
         spectra = _spectrum_features(image)
         spectrum = float(np.mean([np.mean((a-b) ** 2) for a, b in zip(self._spectrum, spectra)]))
         candidate_energy = _absolute_spectrum_energy(image)
@@ -302,11 +314,14 @@ class TextureLoss:
                 "mse_loss": mse}
 
     def evaluate(self, candidate: np.ndarray) -> tuple[float, dict[str, float]]:
+        """Return the weighted total and all named component losses."""
         parts = self.components(candidate)
         total = self._weighted_total(parts)
         return total, {"texture_loss": total, **parts}
 
     def _weighted_total(self, parts: dict[str, float]) -> float:
+        """Combine available component losses using normalized configured weights."""
+        # Normalize by total weight so only relative weight magnitudes matter.
         weighted = (self.weights.spectrum * parts.get("spectrum_loss", 0.0)
                     + self.weights.absolute_spectrum
                     * parts.get("absolute_spectrum_loss", 0.0)
@@ -379,8 +394,15 @@ class TextureLoss:
         # Missing terms have zero weights and therefore cannot affect the sum.
         return self._weighted_total(parts)
 
-def calculate_texture_loss(reference, candidate, weights: TextureLossWeights | None = None,
-                           **settings) -> dict[str, float]:
-    """Return total and component texture losses for two scalar fields."""
+def calculate_texture_loss(
+    reference: np.ndarray, candidate: np.ndarray,
+    weights: TextureLossWeights | None = None, **settings: object,
+) -> dict[str, float]:
+    """Return total and component texture losses for two scalar fields.
+
+    ``reference`` and ``candidate`` must be equally shaped finite 2D arrays.
+    Extra keyword settings configure :class:`TextureLoss`; the returned mapping
+    contains ``texture_loss`` plus each individual diagnostic term.
+    """
     _, result = TextureLoss(np.asarray(reference), weights, **settings).evaluate(np.asarray(candidate))
     return result

@@ -25,12 +25,14 @@ class RadialPowerSpectrum:
     non_dc_energy: float
 
     def to_dict(self) -> dict:
+        """Convert spectrum arrays and energy scalars to serializable values."""
         return {"frequency": self.frequency.tolist(), "power": self.power.tolist(),
                 "sample_count": self.sample_count.tolist(),
                 "dc_energy": self.dc_energy, "non_dc_energy": self.non_dc_energy}
 
 
 def _validate_image(image: np.ndarray, name: str = "image") -> np.ndarray:
+    """Return ``image`` as float64 after validating a finite 2D shape."""
     values = np.asarray(image, dtype=np.float64)
     if values.ndim != 2 or values.size == 0 or not np.all(np.isfinite(values)):
         raise ValueError(f"{name} must be a finite, non-empty 2D image")
@@ -38,6 +40,7 @@ def _validate_image(image: np.ndarray, name: str = "image") -> np.ndarray:
 
 
 def _hann(length: int) -> np.ndarray:
+    """Return a Hann window, using a unit window for a singleton axis."""
     return np.ones(1) if length == 1 else np.hanning(length)
 
 
@@ -75,6 +78,7 @@ def radial_power_spectrum(image: np.ndarray, bins: int | None = None) -> RadialP
 
 
 def _safe_ratio(target: float, result: float) -> float:
+    """Return ``result / target`` with stable behavior around zero energy."""
     scale = max(abs(target), abs(result), 1.0)
     epsilon = np.finfo(float).eps * scale
     if abs(target) <= epsilon and abs(result) <= epsilon:

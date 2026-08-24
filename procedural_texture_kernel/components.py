@@ -11,10 +11,13 @@ class ProceduralComponent:
     amplitude: float = 1.0
     type_name: ClassVar[str] = "component"
     def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Return this atom's unit-amplitude values on matching UV grids."""
         raise NotImplementedError
     def evaluate(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Return the basis values multiplied by the component amplitude."""
         return self.amplitude * self.basis(u, v)
     def to_dict(self) -> dict:
+        """Return a JSON-serializable mapping with the registered atom type."""
         return {"type": self.type_name, **asdict(self)}
 
 @dataclass
@@ -24,7 +27,8 @@ class SinusoidComponent(ProceduralComponent):
     frequency_v: float = 0.0
     phase: float = 0.0
     type_name: ClassVar[str] = "sinusoid"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the unit-amplitude cosine wave on ``u`` and ``v``."""
         xp = array_module(u, v)
         return xp.cos(2.0 * xp.pi * (self.frequency_u * u + self.frequency_v * v) + self.phase)
 
@@ -38,7 +42,8 @@ class SpectralNoiseComponent(ProceduralComponent):
     phases: tuple[float, ...] = ()
     type_name: ClassVar[str] = "spectral_noise"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Sum and RMS-normalize the configured deterministic Fourier modes."""
         xp = array_module(u, v)
         lengths = {len(self.frequencies_u), len(self.frequencies_v),
                    len(self.weights), len(self.phases)}
@@ -63,7 +68,8 @@ class GaborComponent(ProceduralComponent):
     orientation: float = 0.0
     phase: float = 0.0
     type_name: ClassVar[str] = "gabor"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the rotated cosine under its elliptical Gaussian window."""
         xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
         c, s = xp.cos(self.orientation), xp.sin(self.orientation)
@@ -78,7 +84,8 @@ class GaussianRBFComponent(ProceduralComponent):
     center_v: float = 0.5
     sigma: float = 0.1
     type_name: ClassVar[str] = "gaussian_rbf"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the isotropic Gaussian radial basis on the UV grids."""
         xp = array_module(u, v)
         r2 = (u - self.center_u) ** 2 + (v - self.center_v) ** 2
         return xp.exp(-0.5 * r2 / self.sigma**2)
@@ -96,7 +103,10 @@ class PerlinNoiseComponent(ProceduralComponent):
     type_name: ClassVar[str] = "perlin_noise"
 
     @staticmethod
-    def _noise(x, y, permutation):
+    def _noise(
+        x: np.ndarray, y: np.ndarray, permutation: np.ndarray
+    ) -> np.ndarray:
+        """Evaluate one lattice-gradient Perlin octave at sample coordinates."""
         xp = array_module(x, y)
         xi = xp.floor(x).astype(xp.int64) & 255
         yi = xp.floor(y).astype(xp.int64) & 255
@@ -106,7 +116,8 @@ class PerlinNoiseComponent(ProceduralComponent):
         p = permutation
         aa, ab = p[p[xi] + yi], p[p[xi] + yi + 1]
         ba, bb = p[p[xi + 1] + yi], p[p[xi + 1] + yi + 1]
-        def gradient(h, dx, dy):
+        def gradient(h: np.ndarray, dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
+            """Project offsets onto one of eight hashed gradient directions."""
             angle = (h & 7) * (xp.pi / 4.0)
             return xp.cos(angle) * dx + xp.sin(angle) * dy
         lerp = lambda a, b, t: a + t * (b - a)
@@ -114,7 +125,8 @@ class PerlinNoiseComponent(ProceduralComponent):
         upper = lerp(gradient(ab, xf, yf - 1), gradient(bb, xf - 1, yf - 1), sx)
         return xp.sqrt(2.0) * lerp(lower, upper, sy)
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate and normalize all configured seeded Perlin octaves."""
         xp = array_module(u, v)
         if self.octaves < 1:
             raise ValueError("Perlin octaves must be at least one")
@@ -144,7 +156,8 @@ class WaveletComponent(ProceduralComponent):
     scale_v: float = 0.12
     orientation: float = 0.0
     type_name: ClassVar[str] = "wavelet"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a rotated anisotropic Mexican-hat wavelet."""
         xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
         c, s = xp.cos(self.orientation), xp.sin(self.orientation)
@@ -152,8 +165,11 @@ class WaveletComponent(ProceduralComponent):
         radius2 = (x / self.scale_u) ** 2 + (y / self.scale_v) ** 2
         return (1.0 - radius2) * xp.exp(-0.5 * radius2)
 
-def _perlin_basis(u, v, frequency, octaves, persistence, lacunarity,
-                  offset_u, offset_v, seed):
+def _perlin_basis(
+    u: np.ndarray, v: np.ndarray, frequency: float, octaves: int,
+    persistence: float, lacunarity: float, offset_u: float, offset_v: float,
+    seed: int,
+) -> np.ndarray:
     """Shared deterministic octave-noise implementation."""
     return PerlinNoiseComponent(1.0, frequency, octaves, persistence, lacunarity,
                                 offset_u, offset_v, seed).basis(u, v)
@@ -173,7 +189,8 @@ class ThresholdedNoiseComponent(ProceduralComponent):
     seed: int = 0
     type_name: ClassVar[str] = "thresholded_noise"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Rotate, threshold, and smooth a seeded fractal noise field."""
         xp = array_module(u, v)
         # Rotate around the source-domain center while retaining procedural
         # continuation outside [0, 1).  Offsets remain in rotated UV space.
@@ -209,7 +226,8 @@ class MaskedNoiseComponent(ProceduralComponent):
     invert_mask: bool = False
     type_name: ClassVar[str] = "masked_noise"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Multiply detail noise by a configurable coherent noise mask."""
         mask = ThresholdedNoiseComponent(
             frequency=self.mask_frequency, octaves=self.mask_octaves,
             offset_u=self.mask_offset_u, offset_v=self.mask_offset_v,
@@ -232,13 +250,15 @@ class VoronoiNoiseComponent(ProceduralComponent):
     offset_v: float = 0.0
     seed: int = 0
     type_name: ClassVar[str] = "voronoi_noise"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate nearest randomized cell-feature distance at each sample."""
         xp = array_module(u, v)
         x = (u + self.offset_u) * self.frequency
         y = (v + self.offset_v) * self.frequency
         ix, iy = xp.floor(x).astype(xp.int64), xp.floor(y).astype(xp.int64)
         best = xp.full(xp.broadcast_shapes(u.shape, v.shape), xp.inf)
-        def rnd(a, b, salt):
+        def rnd(a: np.ndarray, b: np.ndarray, salt: int) -> np.ndarray:
+            """Return deterministic pseudo-random cell offsets in ``[0, 1)``."""
             n = xp.sin(a * 127.1 + b * 311.7 + (self.seed + salt) * 74.7) * 43758.5453
             return n - xp.floor(n)
         for oy in (-1, 0, 1):
@@ -260,7 +280,8 @@ class FractalBrownianMotionComponent(ProceduralComponent):
     offset_v: float = 0.0
     seed: int = 0
     type_name: ClassVar[str] = "fbm"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate normalized fractal Brownian motion on the UV grids."""
         return _perlin_basis(u, v, self.frequency, self.octaves, self.persistence,
                              self.lacunarity, self.offset_u, self.offset_v, self.seed)
 
@@ -272,7 +293,8 @@ class RidgedMultifractalComponent(FractalBrownianMotionComponent):
     rotation: float = 0.0
     anisotropy: float = 1.0
     type_name: ClassVar[str] = "ridged_multifractal"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Accumulate folded Perlin octaves into an anisotropic ridge field."""
         xp = array_module(u, v)
         if self.octaves < 1:
             raise ValueError("Ridged multifractal octaves must be at least one")
@@ -300,7 +322,8 @@ class RidgedMultifractalComponent(FractalBrownianMotionComponent):
 class TurbulenceNoiseComponent(FractalBrownianMotionComponent):
     """Absolute-value (folded) fractal noise."""
     type_name: ClassVar[str] = "turbulence_noise"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Fold fractal noise around zero to produce turbulence."""
         xp = array_module(u, v)
         return 2.0 * xp.abs(super().basis(u, v)) - 1.0
 
@@ -310,7 +333,8 @@ class DomainWarpedNoiseComponent(FractalBrownianMotionComponent):
     warp_amplitude: float = 0.15
     warp_frequency: float = 2.0
     type_name: ClassVar[str] = "domain_warped_noise"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Sample fBm after displacing UV coordinates with two noise fields."""
         wu = _perlin_basis(u, v, self.warp_frequency, 3, .5, 2., 0., 0., self.seed + 101)
         wv = _perlin_basis(u, v, self.warp_frequency, 3, .5, 2., 0., 0., self.seed + 211)
         return _perlin_basis(u + self.warp_amplitude * wu, v + self.warp_amplitude * wv,
@@ -326,7 +350,8 @@ class WarpedRidgedMultifractalComponent(RidgedMultifractalComponent):
     warp_octaves: int = 3
     type_name: ClassVar[str] = "warped_ridged_multifractal"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate ridged noise after applying a seeded vector domain warp."""
         if self.warp_octaves < 1:
             raise ValueError("Warp octaves must be at least one")
         wu = _perlin_basis(u, v, self.warp_frequency, self.warp_octaves,
@@ -360,7 +385,8 @@ class WarpedRidgeDetailComponent(ProceduralComponent):
     invert_mask: bool = False
     type_name: ClassVar[str] = "warped_ridge_detail"
 
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Mask high-frequency detail with a smooth warped-ridge field."""
         xp = array_module(u, v)
         ridge = WarpedRidgedMultifractalComponent(
             frequency=self.ridge_frequency, octaves=self.ridge_octaves,
@@ -381,7 +407,11 @@ class WarpedRidgeDetailComponent(ProceduralComponent):
             self.detail_offset_u, self.detail_offset_v, self.detail_seed)
         return mask * detail
 
-def _rotated(u, v, center_u, center_v, orientation):
+def _rotated(
+    u: np.ndarray, v: np.ndarray, center_u: float, center_v: float,
+    orientation: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Translate and rotate UV grids into component-local coordinates."""
     xp = array_module(u, v)
     du, dv = u - center_u, v - center_v
     c, s = xp.cos(orientation), xp.sin(orientation)
@@ -396,7 +426,8 @@ class AnisotropicGaussianComponent(ProceduralComponent):
     sigma_v: float = .08
     orientation: float = 0.0
     type_name: ClassVar[str] = "anisotropic_gaussian"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a rotated elliptical Gaussian at each UV sample."""
         xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         return xp.exp(-.5 * ((x / self.sigma_u) ** 2 + (y / self.sigma_v) ** 2))
@@ -411,7 +442,8 @@ class LineComponent(ProceduralComponent):
     orientation: float = 0.0
     softness: float = .01
     type_name: ClassVar[str] = "line"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a finite, sigmoid-softened bar in local coordinates."""
         xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         d = xp.maximum(xp.abs(y) - self.width / 2, xp.abs(x) - self.length / 2)
@@ -425,7 +457,8 @@ class StepEdgeComponent(ProceduralComponent):
     orientation: float = 0.0
     softness: float = .02
     type_name: ClassVar[str] = "step_edge"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a hard or hyperbolic-tangent oriented transition."""
         xp = array_module(u, v)
         x, _ = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         if self.softness <= 0:
@@ -441,7 +474,8 @@ class DifferenceOfGaussiansComponent(ProceduralComponent):
     ratio: float = 1.6
     mode: str = "dog"
     type_name: ClassVar[str] = "dog_log"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the configured DoG or analytic LoG radial response."""
         xp = array_module(u, v)
         r2 = (u - self.center_u) ** 2 + (v - self.center_v) ** 2
         q = r2 / self.sigma**2
@@ -461,7 +495,8 @@ class PolynomialTrendComponent(ProceduralComponent):
     cross_uv: float = 0.0
     quadratic_v: float = 1.0
     type_name: ClassVar[str] = "polynomial_trend"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate the centered quadratic polynomial over the UV grids."""
         x, y = u - .5, v - .5
         return (self.linear_u*x + self.linear_v*y + self.quadratic_u*x*x +
                 self.cross_uv*x*y + self.quadratic_v*y*y)
@@ -475,7 +510,8 @@ class RadialWaveComponent(ProceduralComponent):
     phase: float = 0.0
     decay: float = 0.0
     type_name: ClassVar[str] = "radial_wave"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate an optionally decaying concentric cosine wave."""
         xp = array_module(u, v)
         r = xp.hypot(u - self.center_u, v - self.center_v)
         return xp.cos(2*xp.pi*self.frequency*r + self.phase) * xp.exp(-self.decay*r)
@@ -485,7 +521,8 @@ class SpiralWaveComponent(RadialWaveComponent):
     """Curved wave with radial and angular phase progression."""
     arms: float = 2.0
     type_name: ClassVar[str] = "spiral_wave"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a wave whose phase advances radially and angularly."""
         xp = array_module(u, v)
         du, dv = u - self.center_u, v - self.center_v
         r, theta = xp.hypot(du, dv), xp.arctan2(dv, du)
@@ -499,7 +536,8 @@ class SparseImpulseComponent(ProceduralComponent):
     seed: int = 0
     signed: bool = False
     type_name: ClassVar[str] = "sparse_impulse"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Sum deterministic Gaussian impulses selected by ``seed``."""
         xp = array_module(u, v)
         count = max(0, int(round(self.density)))
         rng = np.random.default_rng(self.seed)
@@ -520,7 +558,8 @@ class BinaryPrimitiveComponent(ProceduralComponent):
     shape: str = "disk"
     thickness: float = .03
     type_name: ClassVar[str] = "binary_primitive"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Evaluate a soft binary disk, box, or checker primitive."""
         xp = array_module(u, v)
         x, y = _rotated(u, v, self.center_u, self.center_v, self.orientation)
         if self.shape == "disk": mask = (x/self.size_u)**2 + (y/self.size_v)**2 <= 1
@@ -535,7 +574,8 @@ class SimpleConstantComponent(ProceduralComponent):
     """Simple, monochromic constant component."""
     value:float = 0.0
     type_name: ClassVar[str] = "simple_constant"
-    def basis(self, u, v):
+    def basis(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        """Return a unit array broadcast to the UV grid shape."""
         xp = array_module(u, v)
         return xp.ones(xp.broadcast_shapes(u.shape, v.shape)) * self.value
 
