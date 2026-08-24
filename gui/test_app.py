@@ -30,6 +30,17 @@ ATOM_LABELS = {
 }
 DEFAULT_DECOMPOSITION_BANDS = 5
 
+# The Blender add-on's non-compact flow supports shader graphs only when every
+# nested component is analytic. The fitter currently builds shader-graph
+# candidates from Perlin components, so that family is intentionally omitted
+# from this safe GUI preset.
+NON_COMPACT_FLOW_FAMILIES = (
+    "sinusoid", "spectral_noise", "gabor", "gaussian_rbf", "wavelet",
+    "anisotropic_gaussian", "line", "step_edge", "dog_log",
+    "polynomial_trend", "radial_wave", "spiral_wave", "binary_primitive",
+    "simple_constant",
+)
+
 class TestApplication(tk.Tk):
     """Small visual harness; fitting runs on a worker thread."""
     def __init__(self):
@@ -175,12 +186,20 @@ class TestApplication(tk.Tk):
         self.atom_enabled = {
             family: tk.BooleanVar(value=True) for family in SUPPORTED_COMPONENT_FAMILIES
         }
+        atom_presets = ttk.Frame(atom_controls)
+        atom_presets.grid(row=0, column=0, columnspan=5, sticky="w", padx=6, pady=(2, 4))
+        ttk.Button(atom_presets, text="Select all",
+                   command=self.select_all_atoms).pack(side="left", padx=4)
+        ttk.Button(atom_presets, text="Deselect all",
+                   command=self.deselect_all_atoms).pack(side="left", padx=4)
+        ttk.Button(atom_presets, text="Select all supported by non compact flow",
+                   command=self.select_non_compact_flow_atoms).pack(side="left", padx=4)
         columns = 5
         for index, family in enumerate(SUPPORTED_COMPONENT_FAMILIES):
             label = ATOM_LABELS.get(family, family.replace("_", " ").title())
             ttk.Checkbutton(atom_controls, text=label,
                             variable=self.atom_enabled[family]).grid(
-                                row=index // columns, column=index % columns,
+                                row=1 + index // columns, column=index % columns,
                                 sticky="w", padx=10, pady=2)
         extent_controls = ttk.Frame(self); extent_controls.pack(fill="x", padx=16)
         ttk.Label(extent_controls, text="Result UV extent").pack(side="left")
@@ -207,6 +226,20 @@ class TestApplication(tk.Tk):
 
     def _toggle_fullscreen(self, _event=None):
         self.attributes("-fullscreen", not bool(self.attributes("-fullscreen")))
+
+    def _select_atom_families(self, families):
+        selected = set(families)
+        for family, variable in self.atom_enabled.items():
+            variable.set(family in selected)
+
+    def select_all_atoms(self):
+        self._select_atom_families(SUPPORTED_COMPONENT_FAMILIES)
+
+    def deselect_all_atoms(self):
+        self._select_atom_families(())
+
+    def select_non_compact_flow_atoms(self):
+        self._select_atom_families(NON_COMPACT_FLOW_FAMILIES)
 
     def _update_weight_controls(self):
         state = ["disabled"] if self.adaptive_weights.get() else ["!disabled"]

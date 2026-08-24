@@ -565,6 +565,18 @@ def test_gui_has_labels_for_every_component_family():
     from procedural_texture_kernel import SUPPORTED_COMPONENT_FAMILIES
     assert set(SUPPORTED_COMPONENT_FAMILIES) <= set(ATOM_LABELS)
 
+
+def test_gui_non_compact_flow_preset_contains_only_safe_fitted_families():
+    from gui.test_app import NON_COMPACT_FLOW_FAMILIES
+
+    assert set(NON_COMPACT_FLOW_FAMILIES) == {
+        "sinusoid", "spectral_noise", "gabor", "gaussian_rbf", "wavelet",
+        "anisotropic_gaussian", "line", "step_edge", "dog_log",
+        "polynomial_trend", "radial_wave", "spiral_wave", "binary_primitive",
+        "simple_constant",
+    }
+    assert "shader_graph" not in NON_COMPACT_FLOW_FAMILIES
+
 def test_gui_defaults_to_five_decomposition_bands():
     from gui.test_app import DEFAULT_DECOMPOSITION_BANDS
     assert DEFAULT_DECOMPOSITION_BANDS == FitConfig().decomposition_bands == 5

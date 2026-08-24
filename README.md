@@ -313,6 +313,18 @@ shader-graph families describe stochastic or coherent regions. Disabling a
 family narrows and speeds the search but prevents its representation from being
 used; at least one family must remain enabled.
 
+The buttons above the atom checkboxes provide selection presets. **Select all**
+enables every registered family, while **Deselect all** clears the selection so
+it can be rebuilt manually (a fit still requires at least one family). **Select
+all supported by non compact flow** selects sinusoid, spectral noise, Gabor,
+Gaussian RBF, wavelet, anisotropic Gaussian, line, step edge, DoG/LoG,
+polynomial trend, radial wave, spiral wave, binary primitive, and simple
+constant. These are the families that the Blender add-on can import through its
+non-compact analytic flow. Although that flow can also import a `shader_graph`
+whose nested components are all analytic, the fitter's current shader-graph
+candidate embeds Perlin components; the safe preset therefore leaves
+`shader_graph` disabled.
+
 The remaining controls affect workflow or display rather than model fitting.
 
 | Input | Purpose and influence on the result |
