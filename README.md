@@ -547,3 +547,108 @@ pixel-aligned proposals.
 ## Current limitations
 
 The model is scalar/grayscale and the GUI is a development tool. Candidate scoring evaluates compact procedural candidates directly, but local position search is not FFT-accelerated. Very stochastic, photographic, sharp-edged, or high-entropy fields may require many atoms and are often better represented by conventional textures. Output is not clipped during model synthesis, preserving both genuine statistics and the signed diagnostic residual. Periodic seam constraints, broader/adaptive noise seed searches, discrete wavelet decompositions, SSIM/perceptual losses, color-channel fitting, and batch/GPU paths are not yet implemented.
+
+## Glossary
+
+- **Amplitude** — The strength of a component: increasing its magnitude makes
+  that component's effect more visible. A negative amplitude reverses its light
+  and dark contribution.
+- **Anti-aliasing** — Smoothing applied when reducing an image or limiting fine
+  patterns so they do not create false jagged edges or moiré patterns.
+- **Atom / component** — One simple mathematical pattern used as a building
+  block of the reconstructed texture. Examples include a wave, line, spot,
+  edge, or noise pattern. In this project, the two words are often used
+  interchangeably.
+- **Autocorrelation** — A measurement of how strongly an image resembles a
+  shifted copy of itself. It helps identify repeated spacing and patterns.
+- **Backend** — The system used to perform numerical calculations. The NumPy
+  backend uses the CPU, while the optional CuPy backend uses a compatible
+  NVIDIA GPU.
+- **Band / decomposition band** — One layer of an image containing a particular
+  range of detail sizes. Fine bands contain small details; coarse bands contain
+  broad shapes and gradual changes.
+- **Bias** — A single value added across the whole model to set its basic
+  brightness level.
+- **Candidate** — A possible atom that the fitter tests before deciding whether
+  to add it to the model.
+- **Contrast** — The amount of difference between light and dark values. A
+  high-contrast texture has stronger light and dark variations.
+- **CPU** — The computer's general-purpose processor. It runs the default NumPy
+  fitting backend.
+- **CUDA** — NVIDIA's platform for running calculations on compatible graphics
+  cards. It is required by this project's optional CuPy backend.
+- **CuPy** — A Python array library similar to NumPy that performs supported
+  calculations on an NVIDIA GPU.
+- **Deterministic** — Producing the same result whenever the same input,
+  settings, and seed are used.
+- **FFT (Fast Fourier Transform)** — A fast method for separating an image into
+  its component frequencies. The fitter uses it to find strong repeating or
+  wave-like patterns.
+- **Fit / fitting** — The process of searching for and adjusting procedural
+  components so their combined result resembles the source image.
+- **Fourier analysis** — A way to describe an image as a combination of waves
+  with different frequencies, strengths, and directions. FFT is the fast
+  calculation used to perform this analysis.
+- **Frequency** — How often a pattern repeats across an area. Low frequencies
+  describe broad, slow changes; high frequencies describe fine details.
+- **GPU** — A graphics processor that can also run many numerical calculations
+  in parallel. A compatible NVIDIA GPU can optionally accelerate parts of the
+  fitting process.
+- **Gradient** — The amount and direction of brightness change between nearby
+  pixels. Strong gradients usually represent visible edges.
+- **Grayscale** — An image containing brightness values but no color. Black,
+  gray, and white represent different brightness levels.
+- **Histogram** — A count of how often different brightness values occur in an
+  image, without considering where those values appear.
+- **High-frequency detail** — Small, rapidly changing features such as fine
+  grain, tiny scratches, or sharp edges.
+- **JSON** — A text-based file format used here to save the procedural model,
+  its settings, measurements, and metadata.
+- **Laplacian pyramid** — A method of separating an image into several bands,
+  from fine detail to broad structure, which can later be added together to
+  recreate the image.
+- **Loss / objective** — A numerical score describing the difference between
+  the source and reconstructed images. Lower values indicate a closer match.
+- **Luminance** — The perceived brightness of a color. Color images are
+  converted to luminance because the current model works with grayscale values.
+- **Metadata** — Additional information saved about a fit, such as settings,
+  progress records, backend details, and per-band measurements.
+- **MSE (Mean Squared Error)** — The average squared difference between matching
+  pixels in two images. It strongly favors placing features in the same
+  locations as the source.
+- **Normalization** — Converting values to a consistent scale so they can be
+  compared or processed reliably, commonly the range from `0` to `1`.
+- **NumPy** — The Python numerical array library used by the default CPU
+  backend.
+- **Optimizer / optimization** — The part of the fitter that repeatedly adjusts
+  component settings to reduce the loss score.
+- **Perlin noise** — A smoothly varying, repeatable noise pattern commonly used
+  to imitate natural variation such as clouds, stone, or terrain.
+- **Plane** — A simple gradual brightness slope across the image. Together with
+  the bias, it represents the model's most basic large-scale brightness.
+- **Procedural texture** — A texture described by mathematical rules and
+  parameters instead of only by a fixed grid of stored pixels. It can be
+  evaluated at different sizes or beyond the original image area.
+- **Raster image / raster texture** — An image stored as a rectangular grid of
+  pixels, such as a PNG, JPEG, or TIFF file. Enlarging a raster does not create
+  new underlying detail.
+- **Reconstruction / result** — The image produced by evaluating all fitted
+  procedural components together.
+- **Residual** — The difference left after subtracting the reconstruction from
+  the source image. It shows what the current model has not yet reproduced.
+- **Seed** — A number used to create a repeatable sequence of random-looking
+  choices. Changing it lets the fitter explore different noise candidates.
+- **Serialization** — Converting the model and its settings into data that can
+  be saved and loaded, such as the project's JSON output.
+- **Scalar field** — A set of positions where each position has one numerical
+  value. A grayscale texture is a two-dimensional scalar field whose values
+  represent brightness.
+- **Spectrum / power spectrum** — A description of how much of an image's
+  variation belongs to broad, medium, and fine frequencies. It does not require
+  features to appear at the same positions.
+- **Texture-loss weight** — A value controlling how much one comparison method,
+  such as Spectrum or MSE, contributes to the combined loss score.
+- **UV coordinates / UV extent** — Two coordinates, U and V, used to locate
+  points on a texture. The original texture occupies the range from `0` up to
+  `1` in each direction; a larger extent previews the procedural model beyond
+  that original area.
